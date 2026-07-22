@@ -2,25 +2,161 @@ import cv2 as cv
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Union
+import math
 
-def paper_clean(img):
-    print("Cleaning paper")
-    size = img.shape
-    paper_brightness = np.mean(img)
-    new_img = np.full(size, paper_brightness)
+class LineDetector:
+    def __init__(self, width=2, height=5, step=5):
+        self.width = width
+        self.height = height
+        self.step = step
+        self.angles = np.arange(0, 360, step)
+        
+        # Precompute the relative (dy, dx) pixel offsets for every angle's rectangle
+        # This replaces the slow nested loops in mean_rect
+        self.templates = {}
+        self.tips = {}
+        
+        max_radius = int(np.ceil(height)) + 2
+        center = (max_radius, max_radius)
+        
+        for angle in self.angles:
+            tilt = math.radians(angle)
+            # Calculate tip relative to pivot based on your math logic
+            tip_r = height * math.cos(tilt)
+            tip_c = -height * math.sin(tilt)
+            
+            # Create a blank mask to draw the thick vector (rectangle)
+            mask = np.zeros((2 * max_radius + 1, 2 * max_radius + 1), dtype=np.uint8)
+            cv.line(mask, center, 
+                     (int(round(center[1] + tip_c)), int(round(center[0] + tip_r))), 
+                     255, thickness=width)
+            
+            dy, dx = np.where(mask > 0)
+            # Store offsets relative to the pivot (0,0)
+            self.templates[angle] = (dy - center[0], dx - center[1])
+            self.tips[angle] = (tip_r, tip_c)
 
-    print("Initiated background")
+    def mean_rect(self, img, pivot, angle):
+        """Fetches the mean and std of the rotated rectangle instantly via NumPy indexing."""
+        dy, dx = self.templates[angle]
+        
+        # Apply offsets to pivot
+        r_idx = int(pivot[0]) + dy
+        c_idx = int(pivot[1]) + dx
+        
+        # Filter indices that fall outside the image boundaries
+        valid = (r_idx >= 0) & (r_idx < img.shape[0]) & (c_idx >= 0) & (c_idx < img.shape[1])
+        r_idx, c_idx = r_idx[valid], c_idx[valid]
+        
+        if len(r_idx) == 0:
+            return 255.0, 0.0
+            
+        vals = img[r_idx, c_idx]
+        return float(np.mean(vals)), float(np.std(vals))
 
-    for index, val in np.ndenumerate(gray_img):
-        pixel_brightness = mean_disc(img, index, 2)[0]
-        local_brightness, local_std = mean_disc(img, index, 5)
-        print("Computed local brightness at", index)
-        if (pixel_brightness < local_brightness - local_std):
-            new_img[index] = 0
-        elif (pixel_brightness > local_brightness + local_std):
-            new_img[index] = 255
+    def mean_disc(self, img, pivot):
+        """Calculates local neighborhood color."""
+        r = self.height
+        r0 = max(0, int(pivot[0] - r))
+        r1 = min(img.shape[0], int(pivot[0] + r + 1))
+        c0 = max(0, int(pivot[1] - r))
+        c1 = min(img.shape[1], int(pivot[1] + r + 1))
+        
+        region = img[r0:r1, c0:c1]
+        if region.size == 0:
+            return 255.0, 0.0
+        return float(np.mean(region)), float(np.std(region))
 
-    return new_img
+    def get_valid_paths(self, img, pivot, visited_mask):
+        """
+        Consolidates num_of_paths and line_direction. 
+        Sweeps 360 degrees and finds all local minimums (valleys) that correspond to dark lines.
+        """
+        print("Fetching valid paths from", pivot)
+        local_mean, local_std = self.mean_disc(img, pivot)
+        # Assuming dark lines on a light background. 
+        # If mean is lower than the local neighborhood, it's on a line.
+        threshold = local_mean - (local_std * 1) 
+        
+        means = []
+        for angle in self.angles:
+            mean, _ = self.mean_rect(img, pivot, angle)
+            
+            # Check if the tip of this vector would land on a visited pixel
+            tip_r = int(pivot[0] + self.tips[angle][0])
+            tip_c = int(pivot[1] + self.tips[angle][1])
+            
+            if 0 <= tip_r < img.shape[0] and 0 <= tip_c < img.shape[1]:
+                is_visited = visited_mask[tip_r, tip_c]
+            else:
+                is_visited = True # Treat out-of-bounds as visited so we don't go there
+                
+            means.append((mean, angle, tip_r, tip_c, is_visited))
+            
+        # Find local minima in the cyclic array of means
+        paths = []
+        n = len(means)
+        for i in range(n):
+            prev_m = means[(i - 1) % n][0]
+            curr_m = means[i][0]
+            next_m = means[(i + 1) % n][0]
+            
+            # It's a local minimum (valley), it's dark enough, and it hasn't been visited
+            if curr_m < prev_m and curr_m <= next_m:
+                if curr_m < threshold and not means[i][4]:
+                    paths.append(means[i])
+                    
+        return paths
+
+    def mark_visited(self, visited_mask, pivot):
+        """Marks a radius around the pivot as visited to prevent sub-pixel infinite loops."""
+        cv.circle(visited_mask, (int(pivot[1]), int(pivot[0])), self.width, 1, -1)
+
+    def line_detect(self, img, start, visited_mask):
+        """Iterative tracker that follows the line until it ends or hits an intersection."""
+        # If there isn't exactly 1 forward path, this is not an endpoint.
+        print("Initiating line detection from", start)
+        paths = self.get_valid_paths(img, start, visited_mask)
+        if len(paths) != 1:
+            return None
+            
+        line = [start]
+        self.mark_visited(visited_mask, start)
+        curr = start
+        
+        while True:
+            paths = self.get_valid_paths(img, curr, visited_mask)
+            if len(paths) == 0:
+                break # Line ended
+                
+            # Pick the darkest path available
+            best_path = min(paths, key=lambda x: x[0])
+            next_move = (best_path[2], best_path[3])
+            
+            line.append(next_move)
+            self.mark_visited(visited_mask, next_move)
+            curr = next_move
+            
+        return line
+
+    def findall_lines(self, img):
+        print("Initiating search")
+        lines = []
+        visited_mask = np.zeros(img.shape, dtype=np.uint8)
+        
+        # Optimization: Only attempt to start tracking from dark pixels.
+        # This replaces iterating over every single pixel in the image.
+        dark_pixels = np.argwhere(img == 0) 
+        
+        for r, c in dark_pixels:
+            print("Dark pixel found at", (r,c))
+            if not visited_mask[r, c]:
+                line = self.line_detect(img, (r, c), visited_mask)
+                if line is not None and len(line) > 1:
+                    lines.append(line)
+                    
+        return lines
+
 
 # Fast AI generated version for testing
 def get_disc_kernel(radius):
@@ -65,7 +201,7 @@ def paper_clean_fast(img):
     print("Applying adaptive threshold...")
     # 5. Initialize background with overall image mean
     paper_brightness = np.mean(img_float)
-    new_img = np.full(img.shape, paper_brightness, dtype=np.uint8)
+    new_img = np.full(img.shape, 255, dtype=np.uint8)
 
     # 6. Apply your exact conditional logic vector-wide using boolean masks
     dark_mask = pixel_brightness < (local_brightness - local_std)
@@ -76,262 +212,74 @@ def paper_clean_fast(img):
 
     return new_img
 
-def paper_clean_circles(img, r_in=2, r_out=5):
-    size = img.shape
-    paper_brightness = np.mean(img)
-    # Initialize background
-    new_img = np.full(size, paper_brightness, dtype=np.uint8)
-    
-    img_float = img.astype(np.float32)
-    
-    # 1. Create masks for inner and outer circles
-    y_in, x_in = np.ogrid[-r_in:r_in+1, -r_in:r_in+1]
-    mask_in = (x_in**2 + y_in**2 <= r_in**2).astype(np.float32)
-    kernel_in = mask_in / np.sum(mask_in)
-    
-    y_out, x_out = np.ogrid[-r_out:r_out+1, -r_out:r_out+1]
-    mask_out = (x_out**2 + y_out**2 <= r_out**2).astype(np.float32)
-    kernel_out = mask_out / np.sum(mask_out)
-    
-    # 2. Compute means and standard deviations globally (instant via convolution)
-    mean_in = cv.filter2D(img_float, -1, kernel_in)
-    mean_out = cv.filter2D(img_float, -1, kernel_out)
-    mean_out_sq = cv.filter2D(img_float**2, -1, kernel_out)
-    
-    var_out = np.maximum(mean_out_sq - mean_out**2, 0)
-    std_out = np.sqrt(var_out)
-    
-    # 3. Get relative coordinates for painting the inner circle
-    y_paint_idx, x_paint_idx = np.where(mask_in > 0)
-    y_paint_idx -= r_in
-    x_paint_idx -= r_in
-    
-    # Stride of 3 ensures circles of radius 2 overlap enough to cover the grid
-    stride = 3 
-    
-    # 4. Grid sample and paint
-    for r in range(r_in, size[0], stride):
-        for c in range(r_in, size[1], stride):
-            val_in = mean_in[r, c]
-            val_out = mean_out[r, c]
-            val_std = std_out[r, c]
-            
-            if val_in < val_out - val_std:
-                color = 0
-            elif val_in > val_out + val_std:
-                color = 255
-            else:
-                continue # Remains paper_brightness
-                
-            # Shift paint mask to current center
-            y_paint = y_paint_idx + r
-            x_paint = x_paint_idx + c
-            
-            # Keep indices within image bounds
-            valid = (y_paint >= 0) & (y_paint < size[0]) & (x_paint >= 0) & (x_paint < size[1])
-            new_img[y_paint[valid], x_paint[valid]] = color
-            
-    return new_img
-
-def mean_disc(mat, center, radius):
-    n, m = mat.shape
-    r_c, c_c = center
-
-    r_min = max(0, int(np.floor(r_c - radius)))
-    r_max = min(n, int(np.ceil(r_c + radius)) + 1)
-    c_min = max(0, int(np.floor(c_c - radius)))
-    c_max = min(m, int(np.ceil(c_c + radius)) + 1)
-
-    r_grid, c_grid = np.ogrid[r_min:r_max, c_min:c_max]
-
-    disc = [
-        [(r - r_c) ** 2 + (c - c_c) ** 2 <= radius**2 for c in range(c_min, c_max)]
-        for r in range(r_min, r_max)
-    ]
-    disc_values = mat[r_min:r_max, c_min:c_max][disc]
-
-    if disc_values.size == 0:
-        return 0
-
-    return (float(np.mean(disc_values)), float(np.std(disc_values)))
-
-def mean_rect(mat, width, height, corner, tilt):
-    n, m = mat.shape
-    r0, c0 = corner
-
-    cos_t = math.cos(tilt)
-    sin_t = math.sin(tilt)
-
-    r_corners = [
-        r0,
-        r0 + width * sin_t,
-        r0 + height * cos_t,
-        r0 + width * sin_t + height * cos_t,
-    ]
-    c_corners = [
-        c0,
-        c0 + width * cos_t,
-        c0 - height * sin_t,
-        c0 + width * cos_t - height * sin_t,
-    ]
-
-    r_min = max(0, int(math.floor(min(r_corners))))
-    r_max = min(n, int(math.ceil(max(r_corners))) + 1)
-    c_min = max(0, int(math.floor(min(c_corners))))
-    c_max = min(m, int(math.ceil(max(c_corners))) + 1)
-
-    rect_values = []
-    for r in range(r_min, r_max):
-        dy = r - r0
-
-        row_w_proj = dy * sin_t
-        row_h_proj = dy * cos_t
-
-        for c in range(c_min, c_max):
-            dx = c - c0
-
-            w_proj = dx * cos_t + row_w_proj
-            h_proj = -dx * sin_t + row_h_proj
-
-            # Check if the cell center lies within the width and height boundaries
-            if 0 <= w_proj <= width and 0 <= h_proj <= height:
-                rect_values.append(mat[r, c])
-
-    if not rect_values:
-        return 0.0
-
-    return (float(np.mean(rect_values)), float(np.std(rect_values)))
-
-def line_direction(img, pivot, width, height, visited, step=5) -> Union[tuple[int],None]:
+def display_lines(img, lines, thickness=3):
     """
-    The logic: this is like taking a start point and rotating a vector fixed at this start point. 
-    If the vector lies on the line and it does not point in a direction that is already covered,
-    that particular direction is returned.
-
-    This assumes that the mean pixel along the vector is minimum when the vector lies along the
-    (dark) line. If the point lies in the middle of a line, there are technically two maximums
-    but only one is returned to force the vector to move in a certain direction.
+    Reconstructs the lines. OpenCV's cv.line natively handles the 
+    'connecting_pixels' logic you requested, rendering an anti-aliased line 
+    between coordinate pairs instantly.
     """
-    local_color, total_std = mean_disc(pivot, height)
-    mean_dict = {}
-    for angle in range(0, 360, step):
-        tilt = angle * math.pi/180
-        mean, std = mean_rect(img, width, height, pivot, angle * math.pi/180)
-        new_corner = (pivot[0] + height * math.cos(tilt), pivot[1] - height * math.sin(tilt))
-        if (new_corner not in visited) and (mean > local_color + total_std or mean < local_color - total_std):
-            mean_dict[new_corner] = mean
-
-    if mean_dict != {}:
-        return min(mean_dict, key=mean_dict.get)
-    else:
-        return None
-
-def num_of_paths(img, pivot, width, height, visited, step=5, local=30) -> int:
-    """
-    This function determines whether a point is isolated, is at the start of a line
-    or in the middle of a line.
-
-    It returns the number of local minimum points for the mean pixel value.
-    Local is defined by a region swept by an angle of <local> = 30 degrees.
-    This only looks at minimum points that are not already visited.
-    """
-    local_color, total_std = mean_disc(pivot, height)
-    mean_dict = {}
-    count = 0
-
-    for angle in range(0, 360, step):
-        tilt = angle * math.pi/180
-        mean, std = mean_rect(img, width, height, pivot, angle * math.pi/180)
-        new_corner = (pivot[0] + height * math.cos(tilt), pivot[1] - height * math.sin(tilt))
-        if (new_corner not in visited) and (mean > local_color + total_std or mean < local_color - total_std):
-            mean_dict[angle] = (mean, new_corner)
-
-    for angle_range in range(0, 360, local):
-        for angle in mean_dict:
-            if (angle >= angle_range) and (angle < angle_range + local):
-                count += 1
-
-    return count
-
-    if mean_dict != {}:
-        return max(mean_dict, key=mean_dict.get)
-    else:
-        return None
-
-
-
-def line_detect(img, start, width, height, visited) -> Union[list[tuple[int]], None]:
-    """
-    Detects full lines from a starting point.
-
-    Algorithm: if the starting point is not part of a line or in the middle of a line,
-    do nothing. 
-
-    If the starting point is the very start (or end) of a line, find the next point along 
-    the line and move to that with the current point marked as visited so that the next point
-    is treated as the start of a new line.
-
-    Ends when the line ends or intersects another line (which results in more than one way to move)
-    """
-    ret_lst = []
-    num_paths = num_of_paths(img, start, width, height, visited)
-
-    if num_paths != 1:
-        return None
-
-    ret_lst.append(start)
-    visited.add(start)
-    next_move = line_direction(img, start, width, height, visited)
-
-    if next_move not in visited:
-        ret_lst = ret_lst + line_detect(img, next_move, width, height, visited)
-
-    return ret_lst
+    new_img = np.full(img.shape, 255, dtype=np.uint8)
     
-
-def findall_lines(img) -> Union[list[list[tuple[int]]], None]:
-    lines = []
-    for x in img:
-        line = line_detect(img, x, 2, 5, [])
-        if line != None:
-            lines.append(line)
-    return lines
-
-def connecting_pixels(pixel1, pixel2, thickness):
-    # returns a mask
-    # yet to implement
-    pass
-
-def display_lines(img):
-    paper_brightness = 255
-    new_img = np.full(img.shape, paper_brightness, dtype=np.uint8)
-    lines = findall_lines(img)
-
     for line in lines:
-        for i in range(len(lines)):
-            new_img[line[i]] = 0
-            if i < len(lines) -1 :
-                connectors = connecting_pixels(line[i], line[i+1], 3)
-                new_img[connectors] = 0
-    
+        for i in range(len(line) - 1):
+            # OpenCV points are (x, y), which maps to (col, row)
+            p1 = (int(line[i][1]), int(line[i][0]))
+            p2 = (int(line[i+1][1]), int(line[i+1][0]))
+            
+            cv.line(new_img, p1, p2, 0, thickness=thickness)
+            
     return new_img
-
-
 
 img = cv.imread("curvedsurface1.jpeg")
 if img is not None:
-    gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+    gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)[1500:2100, 400:1700]
+    # 1. Apply a slight blur first to smooth out the paper texture
+    blurred_img = cv.GaussianBlur(gray_img, (5, 5), 0)
     
+    # 2. Apply Gaussian Adaptive Thresholding
+    # - 255: Max pixel value (white)
+    # - ADAPTIVE_THRESH_GAUSSIAN_C: Uses a Gaussian weighted mean for the local area
+    # - THRESH_BINARY: Outputs black ink (0) on white paper (255)
+    # - 31: Block size (pixel neighborhood to look at). Must be odd.
+    # - 15: Constant 'C' subtracted from the mean to fine-tune the threshold
+    cleaned_img = cv.adaptiveThreshold(
+        blurred_img, 
+        255, 
+        cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv.THRESH_BINARY, 
+        31, 
+        15
+    )
+    my_cleaned_img = paper_clean_fast(gray_img)
+
+    detector = LineDetector(width=2, height=10, step=5) 
+    lines = detector.findall_lines(cleaned_img)
+    new_img = display_lines(cleaned_img, lines, thickness=2)
+
+    images = [gray_img, cleaned_img, my_cleaned_img, new_img]
+    titles = ["Original", "Gaussian clean", "Cleaning with my algorithm", "Line detection with Gaussian clean"]
+
+    figs, axes = plt.subplots(nrows=2, ncols=2, figsize=(8, 8))
+    axes = axes.flatten()
+    
+    # 4. Loop through images and axes simultaneously
+    for i, ax in enumerate(axes):
+        ax.imshow(images[i], cmap='gray')          # Display the image
+        ax.set_title(titles[i])       # Set individual titles
+        ax.axis('off')                # Hide the X and Y pixel ticks
+    
+    # 5. Render the plot
+    plt.tight_layout()
+    plt.show()
+
+
     # 3. Display the first image
-    ax1.imshow(img)
+    ax1.imshow(cleaned_img, cmap='gray')
     ax1.set_title('First Image')
     ax1.axis('off') # Hides the pixel coordinate axes
     
     # 4. Display the second image
-    new_img = display_lines(img)
-    ax2.imshow(new_img)
+    ax2.imshow(new_img, cmap='gray')
     ax2.set_title('Second Image')
     ax2.axis('off')
     
