@@ -103,8 +103,12 @@ class LineDetector:
                     
         return paths
 
-    def mark_visited(self, visited_mask, pivot):
-        cv.circle(visited_mask, (int(pivot[1]), int(pivot[0])), self.width, 1, -1)
+    def mark_visited(self, visited_mask, p1, p2):
+        """Draws a thick line on the visited mask to consume all pixels along the path."""
+        pt1 = (int(p1[1]), int(p1[0]))
+        pt2 = (int(p2[1]), int(p2[0]))
+        # Use a thickness slightly larger than your line width to ensure all stray edge pixels are consumed
+        cv.line(visited_mask, pt1, pt2, 1, thickness=self.width + 2)
 
     def line_detect(self, img, start, visited_mask):
         paths = self.get_valid_paths(img, start, visited_mask)
@@ -112,7 +116,7 @@ class LineDetector:
             return None
             
         line = [start]
-        self.mark_visited(visited_mask, start)
+        cv.circle(visited_mask, (int(start[1]), int(start[0])), self.width + 1, 1, -1)
         curr = start
         
         while True:
@@ -124,7 +128,7 @@ class LineDetector:
             next_move = (best_path[2], best_path[3])
             
             line.append(next_move)
-            self.mark_visited(visited_mask, next_move)
+            self.mark_visited(visited_mask, curr, next_move)
             curr = next_move
             
         return line
@@ -161,7 +165,7 @@ def paper_clean_fast(img):
 
     # 1. Generate the circular kernels for radius r and R
     kernel_r2 = get_disc_kernel(3)
-    kernel_r5 = get_disc_kernel(10)
+    kernel_r5 = get_disc_kernel(30)
 
     print("Computing global and local statistics simultaneously...")
     # 2. Compute pixel_brightness (radius 2 mean) across the entire image at once
@@ -216,54 +220,47 @@ def display_lines(img, lines, thickness=3):
             
     return new_img
 
-img = cv.imread("curve.jpeg")
-if img is not None:
-    #gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)[1500:2100, 400:1700]
-    gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)[500:1000, 400:1700]
-    # 1. Apply a slight blur first to smooth out the paper texture
-    blurred_img = cv.GaussianBlur(gray_img, (5, 5), 0)
-    
-    # 2. Apply Gaussian Adaptive Thresholding
-    # - 255: Max pixel value (white)
-    # - ADAPTIVE_THRESH_GAUSSIAN_C: Uses a Gaussian weighted mean for the local area
-    # - THRESH_BINARY: Outputs black ink (0) on white paper (255)
-    # - 31: Block size (pixel neighborhood to look at). Must be odd.
-    # - 15: Constant 'C' subtracted from the mean to fine-tune the threshold
-    cleaned_img = cv.adaptiveThreshold(
-        blurred_img, 
-        255, 
-        cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv.THRESH_BINARY, 
-        31, 
-        15
-    )
-    my_cleaned_img = paper_clean_fast(gray_img)
-
-    detector = LineDetector(width=2, height=10, step=5) 
-    lines = detector.findall_lines(cleaned_img)
-
-    max_len = 0
-    max_line = []
-    for line in lines:
-        if len(line) > max_len:
-            max_len = len(line)
-            max_line = line
-        
-    new_img = display_lines(cleaned_img, [max_line], thickness=2)
-
-    images = [gray_img, cleaned_img, my_cleaned_img, new_img]
-    titles = ["Original", "Gaussian clean", "Cleaning with my algorithm", "Line detection with Gaussian clean"]
-
-    figs, axes = plt.subplots(nrows=2, ncols=2, figsize=(8, 8))
-    axes = axes.flatten()
-    
-    # 4. Loop through images and axes simultaneously
-    for i, ax in enumerate(axes):
-        ax.imshow(images[i], cmap='gray')          # Display the image
-        ax.set_title(titles[i])       # Set individual titles
-        ax.axis('off')                # Hide the X and Y pixel ticks
-    
-    # 5. Render the plot
-    plt.tight_layout()
-    plt.show()
+#img = cv.imread("curve.jpeg")
+#if img is not None:
+#    #gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)[1500:2100, 400:1700]
+#    gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)[500:1000, 400:1700]
+#    # 1. Apply a slight blur first to smooth out the paper texture
+#    blurred_img = cv.GaussianBlur(gray_img, (5, 5), 0)
+#    
+#    # 2. Apply Gaussian Adaptive Thresholding
+#    # - 255: Max pixel value (white)
+#    # - ADAPTIVE_THRESH_GAUSSIAN_C: Uses a Gaussian weighted mean for the local area
+#    # - THRESH_BINARY: Outputs black ink (0) on white paper (255)
+#    # - 31: Block size (pixel neighborhood to look at). Must be odd.
+#    # - 15: Constant 'C' subtracted from the mean to fine-tune the threshold
+#    cleaned_img = cv.adaptiveThreshold(
+#        blurred_img, 
+#        255, 
+#        cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
+#        cv.THRESH_BINARY, 
+#        31, 
+#        15
+#    )
+#    my_cleaned_img = paper_clean_fast(gray_img)
+#
+#    detector = LineDetector(width=2, height=10, step=5) 
+#    lines = detector.findall_lines(cleaned_img)
+#
+#    new_img = display_lines(cleaned_img, lines, thickness=2)
+#
+#    images = [gray_img, cleaned_img, my_cleaned_img, new_img]
+#    titles = ["Original", "Gaussian clean", "Cleaning with my algorithm", "Line detection with Gaussian clean"]
+#
+#    figs, axes = plt.subplots(nrows=2, ncols=2, figsize=(8, 8))
+#    axes = axes.flatten()
+#    
+#    # 4. Loop through images and axes simultaneously
+#    for i, ax in enumerate(axes):
+#        ax.imshow(images[i], cmap='gray')          # Display the image
+#        ax.set_title(titles[i])       # Set individual titles
+#        ax.axis('off')                # Hide the X and Y pixel ticks
+#    
+#    # 5. Render the plot
+#    plt.tight_layout()
+#    plt.show()
 
