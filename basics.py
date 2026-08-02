@@ -149,11 +149,11 @@ def step_function(x, start, end):
     return np.where((x >= start) & (x < end), 1.0, 0.0)
 
 def bump(x, d, x0, j, deg=2):
-    B_dict = {(j+i, 0): step_function(x, x0+(j+i)*d, x0+(j+i+1)*d) for i in range(deg+1)}
+    B_dict = {(j+i, 0): step_function(x, x0+(j+i)*d, x0+(j+i+1)*d) for i in range(-2*deg, deg+1)}
     
     k = 1
     while k <= deg:
-        for i in range(deg+1-k):
+        for i in range(-2*deg + k, deg+1-k):
             B_dict[(j+i, k)] = (x-(x0 + (j+i)*d))/(k*d)*B_dict[(j+i, k-1)] + ((x0 + (j+i)*d) + (k+1)*d - x)/(k*d) * B_dict[(j+i+1, k-1)]
         k += 1
 
@@ -173,10 +173,12 @@ def bump(x, d, x0, j, deg=2):
 
 def fn_fit(x, cloud, deg=2, bin_size=10):
     # Assuming cloud is a NumPy array, slice directly instead of list comprehension
+    #print("Fitting global function. Received cloud: ", cloud)
     cloudx = cloud[:, 0]
     cloudy = cloud[:, 1]
     x_max = np.max(cloudx)
     x_min = np.min(cloudx)
+    #print("Minimum parameter is", x_min)
     
     num_bins = int((x_max - x_min) // bin_size) + 1
     local_fits = {}
@@ -203,24 +205,29 @@ def fn_fit(x, cloud, deg=2, bin_size=10):
     global_d1 = np.zeros_like(x, dtype=float)
     global_d2 = np.zeros_like(x, dtype=float)
     
-    for i in range(num_bins):
+    for j in range(-deg, num_bins):
+        i = max(0, min(j + (deg // 2), num_bins - 1))
         if local_fits[i] is None:
+            print("WHAT KIND OF ERROR IS THIS")
             continue
 
         P_x = local_fits[i](x)
         P_dx = local_fits[i].deriv(1)(x)
         P_ddx = local_fits[i].deriv(2)(x)
         
-        B_x, B_dx, B_ddx = bump(x, bin_size, x_min, i, deg)
+        B_x, B_dx, B_ddx = bump(x, bin_size, x_min, j, deg)
         
         global_value += B_x * P_x
         global_d1 += (B_dx * P_x) + (B_x * P_dx)
         global_d2 += (B_ddx * P_x) + (2 * B_dx * P_dx) + (B_x * P_ddx)
 
+    print(f"Computed global value as {global_value[0]}")
     return global_value, global_d1, global_d2
 
-def curve_fit(t_eval, cloud, deg=2, bin_size=10):
+def curve_fit(t_eval, cloud, deg=2, bin_size=0.1):
     # 1. REMOVED the argsort line assuming your cloud is sequentially traced
+    cloud = np.array(cloud)
+    print(cloud)
     cloudx = cloud[:, 0]
     cloudy = cloud[:, 1]
     
@@ -244,6 +251,7 @@ def curve_fit(t_eval, cloud, deg=2, bin_size=10):
     yt, yt_dt, yt_ddt = fn_fit(t_eval, cloud_t_y, deg, bin_size)
 
     return ((xt, yt), (xt_dt, yt_dt), (xt_ddt, yt_ddt))
+
 # Fast AI generated version for testing
 def get_disc_kernel(radius):
     """Generates a normalized circular 2D kernel for convolution."""
