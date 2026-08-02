@@ -252,6 +252,8 @@ def curve_fit(t_eval, cloud, deg=2, bin_size=0.1):
 
     return ((xt, yt), (xt_dt, yt_dt), (xt_ddt, yt_ddt))
 
+# Energy minimizing algorithm
+
 # Fast AI generated version for testing
 def get_disc_kernel(radius):
     """Generates a normalized circular 2D kernel for convolution."""
