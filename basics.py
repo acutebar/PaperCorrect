@@ -134,6 +134,15 @@ class Curve:
     def __init__(self, cloud):
         self.cloud = cloud
 
+    def point_at(self, t):
+        return curve_fit(t, self.cloud)[0]
+
+    def velocity_at(self, t):
+        return curve_fit(t, self.cloud)[1]
+
+    def velocity_at(self, t):
+        return curve_fit(t, self.cloud)[2]
+
 # bump(variable, bin_size, starting_point, cur_bin, degree)
 # https://personal.math.vt.edu/embree/math5466/lecture10.pdf
 def characteristic(x, start, end):
