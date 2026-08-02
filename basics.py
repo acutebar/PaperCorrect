@@ -220,7 +220,7 @@ def fn_fit(x, cloud, deg=2, bin_size=10):
     return global_value, global_d1, global_d2
 
 def curve_fit(t_eval, cloud, deg=2, bin_size=10):
-    cloud = cloud[np.argsort(cloud[:, 0])]
+    # 1. REMOVED the argsort line assuming your cloud is sequentially traced
     cloudx = cloud[:, 0]
     cloudy = cloud[:, 1]
     
@@ -229,11 +229,12 @@ def curve_fit(t_eval, cloud, deg=2, bin_size=10):
     cloudx_shift[0] = cloudx[0]
     cloudy_shift[0] = cloudy[0]
 
-    # Fixed the Euclidean distance calculation to use addition
     increments = np.sqrt(np.square(cloudx - cloudx_shift) + np.square(cloudy - cloudy_shift))
-
-    # Fast O(n) array accumulation replaces the nested loop
     times = np.cumsum(increments)
+    
+    # 2. ADDED Normalization: scale the timeline to exactly [0.0, 1.0]
+    # (Add a tiny epsilon to prevent division by zero just in case)
+    times = times / (times[-1] + 1e-12)
     
     # Pack the 1D arrays into 2D clouds for fn_fit
     cloud_t_x = np.column_stack((times, cloudx))
@@ -243,7 +244,6 @@ def curve_fit(t_eval, cloud, deg=2, bin_size=10):
     yt, yt_dt, yt_ddt = fn_fit(t_eval, cloud_t_y, deg, bin_size)
 
     return ((xt, yt), (xt_dt, yt_dt), (xt_ddt, yt_ddt))
-
 # Fast AI generated version for testing
 def get_disc_kernel(radius):
     """Generates a normalized circular 2D kernel for convolution."""
