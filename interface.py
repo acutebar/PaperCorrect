@@ -227,6 +227,14 @@ if __name__ == "__main__":
             print("\nRunning line detection (this may take a moment)...")
             detector = LineDetector(width=2, height=10, step=5) 
             lines = detector.findall_lines(cleaned_img)
+
+            m = 0
+            for line in lines:
+                if len(line) > m:
+                    max_line = line
+                m = len(line)
+
+            print("The line of maximum length is", line)
             
             all_lines_img = display_lines(cleaned_img, lines, thickness=2)
             

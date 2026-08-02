@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from typing import Union
 import math
 
+
 class LineDetector:
     def __init__(self, width=2, height=5, step=5, sweep=30):
         self.width = width
@@ -15,72 +16,40 @@ class LineDetector:
         self.templates = {}
         self.tips = {}
         
-        max_radius = int(np.ceil(height)) + 2
-        center = (max_radius, max_radius)
+        self.max_radius = int(np.ceil(height)) + 2
+        center = (self.max_radius, self.max_radius)
         
         for angle in self.angles:
             tilt = math.radians(angle)
             tip_r = height * math.cos(tilt)
             tip_c = -height * math.sin(tilt)
             
-            mask = np.zeros((2 * max_radius + 1, 2 * max_radius + 1), dtype=np.uint8)
+            mask = np.zeros((2 * self.max_radius + 1, 2 * self.max_radius + 1), dtype=np.uint8)
             cv.line(mask, center, 
                      (int(round(center[1] + tip_c)), int(round(center[0] + tip_r))), 
                      255, thickness=width)
             
             dy, dx = np.where(mask > 0)
             self.templates[angle] = (dy - center[0], dx - center[1])
-            self.tips[angle] = (tip_r, tip_c)
+            self.tips[angle] = (int(round(tip_r)), int(round(tip_c)))
 
-    def mean_rect(self, img, pivot, angle):
-        dy, dx = self.templates[angle]
-        
-        r_idx = int(pivot[0]) + dy
-        c_idx = int(pivot[1]) + dx
-        
-        valid = (r_idx >= 0) & (r_idx < img.shape[0]) & (c_idx >= 0) & (c_idx < img.shape[1])
-        r_idx, c_idx = r_idx[valid], c_idx[valid]
-        
-        if len(r_idx) == 0:
-            return 255.0, 0.0
-            
-        vals = img[r_idx, c_idx]
-        return float(np.mean(vals)), float(np.std(vals))
-
-    def mean_disc(self, img, pivot):
-        r = self.height
-        r0 = max(0, int(pivot[0] - r))
-        r1 = min(img.shape[0], int(pivot[0] + r + 1))
-        c0 = max(0, int(pivot[1] - r))
-        c1 = min(img.shape[1], int(pivot[1] + r + 1))
-        
-        region = img[r0:r1, c0:c1]
-        if region.size == 0:
-            return 255.0, 0.0
-        return float(np.mean(region)), float(np.std(region))
-
-    def get_valid_paths(self, img, pivot, visited_mask):
-        local_mean, local_std = self.mean_disc(img, pivot)
-        threshold = local_mean - (local_std * 0.5) 
+    def get_valid_paths(self, padded_img, pivot, visited_mask, thresh_map):
+        pr, pc = pivot
+        threshold = thresh_map[pr, pc]
         
         means = []
         for angle in self.angles:
-            mean, _ = self.mean_rect(img, pivot, angle)
+            dy, dx = self.templates[angle]
+            mean = np.mean(padded_img[pr + dy, pc + dx])
             
-            tip_r = int(pivot[0] + self.tips[angle][0])
-            tip_c = int(pivot[1] + self.tips[angle][1])
+            tr, tc = self.tips[angle]
+            tip_r, tip_c = pr + tr, pc + tc
             
-            if 0 <= tip_r < img.shape[0] and 0 <= tip_c < img.shape[1]:
-                is_visited = visited_mask[tip_r, tip_c]
-            else:
-                is_visited = True 
-                
+            is_visited = visited_mask[tip_r, tip_c]
             means.append((mean, angle, tip_r, tip_c, is_visited))
             
         paths = []
         n = len(means)
-        
-        # Calculate how many adjacent angle steps make up the sweep window
         neighbor_count = max(1, self.sweep // self.step)
         
         for i in range(n):
@@ -91,27 +60,22 @@ class LineDetector:
                 prev_m = means[(i - j) % n][0]
                 next_m = means[(i + j) % n][0]
                 
-                # Asymmetric check to handle flat plateaus gracefully.
-                # If three adjacent angles all return exactly 0.0, this ensures 
-                # only the first one is marked as the valley, preventing duplicates.
                 if curr_m >= prev_m or curr_m > next_m:
                     is_valley = False
                     break
                     
             if is_valley and curr_m < threshold and not means[i][4]:
                 paths.append(means[i])
-                    
+                
         return paths
 
     def mark_visited(self, visited_mask, p1, p2):
-        """Draws a thick line on the visited mask to consume all pixels along the path."""
         pt1 = (int(p1[1]), int(p1[0]))
         pt2 = (int(p2[1]), int(p2[0]))
-        # Use a thickness slightly larger than your line width to ensure all stray edge pixels are consumed
         cv.line(visited_mask, pt1, pt2, 1, thickness=self.width + 2)
 
-    def line_detect(self, img, start, visited_mask):
-        paths = self.get_valid_paths(img, start, visited_mask)
+    def line_detect(self, padded_img, start, visited_mask, thresh_map):
+        paths = self.get_valid_paths(padded_img, start, visited_mask, thresh_map)
         if len(paths) != 1:
             return None
             
@@ -120,7 +84,7 @@ class LineDetector:
         curr = start
         
         while True:
-            paths = self.get_valid_paths(img, curr, visited_mask)
+            paths = self.get_valid_paths(padded_img, curr, visited_mask, thresh_map)
             if len(paths) == 0:
                 break 
                 
@@ -134,18 +98,145 @@ class LineDetector:
         return line
 
     def findall_lines(self, img):
-        lines = []
-        visited_mask = np.zeros(img.shape, dtype=np.uint8)
+        kernel = get_disc_kernel(self.height)
+        img_float = img.astype(np.float32)
         
-        dark_pixels = np.argwhere(img == 0) 
+        # Precompute local means and stds globally
+        local_mean = cv.filter2D(img_float, -1, kernel, borderType=cv.BORDER_REFLECT)
+        local_mean_sq = cv.filter2D(img_float**2, -1, kernel, borderType=cv.BORDER_REFLECT)
+        local_var = np.maximum(0, local_mean_sq - (local_mean**2))
+        thresh_map = local_mean - (np.sqrt(local_var) * 0.5)
+
+        # Pad variables to prevent bounds checking
+        pad = self.max_radius
+        padded_img = cv.copyMakeBorder(img, pad, pad, pad, pad, cv.BORDER_CONSTANT, value=255)
+        padded_thresh = cv.copyMakeBorder(thresh_map, pad, pad, pad, pad, cv.BORDER_CONSTANT, value=0)
+        
+        # Visited mask defaults to 1 (visited) outside the true image bounds
+        visited_mask = np.ones(padded_img.shape, dtype=np.uint8)
+        visited_mask[pad:-pad, pad:-pad] = 0
+        
+        lines = []
+        dark_pixels = np.argwhere(img == 0)
         
         for r, c in dark_pixels:
-            if not visited_mask[r, c]:
-                line = self.line_detect(img, (r, c), visited_mask)
-                if line is not None and len(line) > 1:
+            pr, pc = r + pad, c + pad
+            if not visited_mask[pr, pc]:
+                line_padded = self.line_detect(padded_img, (pr, pc), visited_mask, padded_thresh)
+                if line_padded is not None and len(line_padded) > 1:
+                    line = [(pr_val - pad, pc_val - pad) for (pr_val, pc_val) in line_padded]
                     lines.append(line)
                     
         return lines
+
+
+class Curve:
+    def __init__(self, cloud):
+        self.cloud = cloud
+
+# bump(variable, bin_size, starting_point, cur_bin, degree)
+# https://personal.math.vt.edu/embree/math5466/lecture10.pdf
+def characteristic(x, start, end):
+    if (x >= start) and (x < end):
+        return 1
+    else:
+        return 0
+
+def bump(x, d, x0, j, deg=2):
+    B_dict= {(j+i, 0) : characteristic(x, x0+(j+i)*d, x0+(j+i+1)*d)) for i in range(deg+1)}
+    xj = x0 + j*d
+    next = xj + d
+    prev = xj - d
+
+    k=1
+    while k <= deg:
+        for i in range(deg+1-k):
+            B_dict[(j+i, k)] = (x-(x0 + (j+i)*d))/(k*d)*B_dict[(j+i, k-1)] + ((x0 + (j+i)*d) + (k+1)*d - x)/(k*d) * B_dict[(j+i+1, k-1)]
+        k+=1
+
+    B_x = B_dict[(j, deg)]
+    
+    # First derivative (needs deg-1)
+    if deg >= 1:
+        B_dx = (B_dict[(j, deg-1)] - B_dict[(j+1, deg-1)]) / d
+    else:
+        B_dx = 0.0
+        
+    # Second derivative (needs deg-2)
+    if deg >= 2:
+        B_ddx = (B_dict[(j, deg-2)] - 2*B_dict[(j+1, deg-2)] + B_dict[(j+2, deg-2)]) / (d**2)
+    else:
+        B_ddx = 0.0
+
+    return B_x, B_dx, B_ddx
+
+def fn_fit(x, cloud, deg=2, bin_size=10):
+    cloudx = np.array([coord[0] for coord in cloud])
+    x_max = max(cloudx)
+    x_min = min(cloudx)
+    
+    # Cast to integer so range() doesn't throw an error
+    num_bins = int((x_max - x_min) // bin_size) + 1
+
+    local_fits = {}
+
+    for i in range(num_bins):
+        bin_start = x_min + i * bin_size
+        bin_end = x_min + (i + 1) * bin_size
+        
+        local_cloud = [coord for coord in cloud if bin_start <= coord[0] < bin_end]
+        
+        if len(local_cloud) < deg + 1:
+            local_fits[i] = None
+            continue
+            
+        local_cloudx = np.array([coord[0] for coord in local_cloud])
+        local_cloudy = np.array([coord[1] for coord in local_cloud]) # Grabbing y-coord
+        
+        local_poly = np.polynomial.Polynomial.fit(local_cloudx, local_cloudy, deg=deg)
+        local_fits[i] = local_poly
+
+    global_value = 0.0
+    
+    for i in range(num_bins):
+        if local_fits[i] is None:
+            continue
+
+         # 1. Evaluate the exact Polynomial and its derivatives
+        P_x = local_fits[i](x)
+        P_dx = local_fits[i].deriv(1)(x)
+        P_ddx = local_fits[i].deriv(2)(x)
+        
+        # 2. Get the exact bump function and its derivatives
+        B_x, B_dx, B_ddx = bump(x, bin_size, x_min, i, deg)
+        
+        # 3. Product Rule Accumulation
+        global_value += B_x * P_x
+        global_d1 += (B_dx * P_x) + (B_x * P_dx)
+        global_d2 += (B_ddx * P_x) + (2 * B_dx * P_dx) + (B_x * P_ddx)
+
+    return global_value, global_d1, global_d2
+
+def curve_fit(t, cloud, deg=2, bin_size=10, overlap=0.5):
+    t0 = 0
+    cloud = np.argsort(arr[:, 0])
+    cloudx = np.array([coord[0] for coord in cloud])
+    cloudy = np.array([coord[1] for coord in cloud])
+    cloudx_shift = np.roll(cloudx, 1)
+    cloudy_shift = np.roll(cloudy, 1)
+    cloudx_shift[0] = 0.0
+    cloudy_shift[0] = 0.0
+
+    increments = np.sqrt((np.square(cloudx - cloudx_shift) - np.square(cloudy - cloudy_shift)))
+
+    times = [0.0]
+    for i in range(1, len(increments)):
+        times.append(np.sum(increments[1:i]))
+
+    xt, xt_dt, xt_ddt = fn_fit(t, cloud, deg, bin_size)
+    yt, yt_dt, yt_ddt = fn_fit(t, cloud, deg, bin_size)
+
+    return ((xt, yt), (xt_dt, yt_dt), (xt_ddt, yt_ddt))
 
 
 # Fast AI generated version for testing
