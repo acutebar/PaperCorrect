@@ -135,118 +135,114 @@ class Curve:
         self.cloud = cloud
 
     def point_at(self, t):
-        return curve_fit(t, self.cloud)[0]
+        return curve_fit(np.array([t]), self.cloud)[0]
 
     def velocity_at(self, t):
-        return curve_fit(t, self.cloud)[1]
+        return curve_fit(np.array([t]), self.cloud)[1]
 
     def velocity_at(self, t):
-        return curve_fit(t, self.cloud)[2]
+        return curve_fit(np.array([t]), self.cloud)[2]
 
 # bump(variable, bin_size, starting_point, cur_bin, degree)
 # https://personal.math.vt.edu/embree/math5466/lecture10.pdf
-def characteristic(x, start, end):
-    if (x >= start) and (x < end):
-        return 1
-    else:
-        return 0
+def step_function(x, start, end):
+    return np.where((x >= start) & (x < end), 1.0, 0.0)
 
 def bump(x, d, x0, j, deg=2):
-    B_dict= {(j+i, 0) : characteristic(x, x0+(j+i)*d, x0+(j+i+1)*d)) for i in range(deg+1)}
-    xj = x0 + j*d
-    next = xj + d
-    prev = xj - d
-
-    k=1
+    B_dict = {(j+i, 0): step_function(x, x0+(j+i)*d, x0+(j+i+1)*d) for i in range(deg+1)}
+    
+    k = 1
     while k <= deg:
         for i in range(deg+1-k):
             B_dict[(j+i, k)] = (x-(x0 + (j+i)*d))/(k*d)*B_dict[(j+i, k-1)] + ((x0 + (j+i)*d) + (k+1)*d - x)/(k*d) * B_dict[(j+i+1, k-1)]
-        k+=1
+        k += 1
 
     B_x = B_dict[(j, deg)]
     
-    # First derivative (needs deg-1)
     if deg >= 1:
         B_dx = (B_dict[(j, deg-1)] - B_dict[(j+1, deg-1)]) / d
     else:
-        B_dx = 0.0
+        B_dx = np.zeros_like(x)
         
-    # Second derivative (needs deg-2)
     if deg >= 2:
         B_ddx = (B_dict[(j, deg-2)] - 2*B_dict[(j+1, deg-2)] + B_dict[(j+2, deg-2)]) / (d**2)
     else:
-        B_ddx = 0.0
+        B_ddx = np.zeros_like(x)
 
     return B_x, B_dx, B_ddx
 
 def fn_fit(x, cloud, deg=2, bin_size=10):
-    cloudx = np.array([coord[0] for coord in cloud])
-    x_max = max(cloudx)
-    x_min = min(cloudx)
+    # Assuming cloud is a NumPy array, slice directly instead of list comprehension
+    cloudx = cloud[:, 0]
+    cloudy = cloud[:, 1]
+    x_max = np.max(cloudx)
+    x_min = np.min(cloudx)
     
-    # Cast to integer so range() doesn't throw an error
     num_bins = int((x_max - x_min) // bin_size) + 1
-
     local_fits = {}
 
     for i in range(num_bins):
         bin_start = x_min + i * bin_size
         bin_end = x_min + (i + 1) * bin_size
         
-        local_cloud = [coord for coord in cloud if bin_start <= coord[0] < bin_end]
+        # Vectorized mask
+        mask = (cloudx >= bin_start) & (cloudx < bin_end)
         
-        if len(local_cloud) < deg + 1:
+        if np.sum(mask) < deg + 1:
             local_fits[i] = None
             continue
             
-        local_cloudx = np.array([coord[0] for coord in local_cloud])
-        local_cloudy = np.array([coord[1] for coord in local_cloud]) # Grabbing y-coord
+        local_cloudx = cloudx[mask]
+        local_cloudy = cloudy[mask]
         
         local_poly = np.polynomial.Polynomial.fit(local_cloudx, local_cloudy, deg=deg)
         local_fits[i] = local_poly
 
-    global_value = 0.0
+    # Initialize zero arrays matching the size of x
+    global_value = np.zeros_like(x, dtype=float)
+    global_d1 = np.zeros_like(x, dtype=float)
+    global_d2 = np.zeros_like(x, dtype=float)
     
     for i in range(num_bins):
         if local_fits[i] is None:
             continue
 
-         # 1. Evaluate the exact Polynomial and its derivatives
         P_x = local_fits[i](x)
         P_dx = local_fits[i].deriv(1)(x)
         P_ddx = local_fits[i].deriv(2)(x)
         
-        # 2. Get the exact bump function and its derivatives
         B_x, B_dx, B_ddx = bump(x, bin_size, x_min, i, deg)
         
-        # 3. Product Rule Accumulation
         global_value += B_x * P_x
         global_d1 += (B_dx * P_x) + (B_x * P_dx)
         global_d2 += (B_ddx * P_x) + (2 * B_dx * P_dx) + (B_x * P_ddx)
 
     return global_value, global_d1, global_d2
 
-def curve_fit(t, cloud, deg=2, bin_size=10, overlap=0.5):
-    t0 = 0
-    cloud = np.argsort(arr[:, 0])
-    cloudx = np.array([coord[0] for coord in cloud])
-    cloudy = np.array([coord[1] for coord in cloud])
+def curve_fit(t_eval, cloud, deg=2, bin_size=10):
+    cloud = cloud[np.argsort(cloud[:, 0])]
+    cloudx = cloud[:, 0]
+    cloudy = cloud[:, 1]
+    
     cloudx_shift = np.roll(cloudx, 1)
     cloudy_shift = np.roll(cloudy, 1)
-    cloudx_shift[0] = 0.0
-    cloudy_shift[0] = 0.0
+    cloudx_shift[0] = cloudx[0]
+    cloudy_shift[0] = cloudy[0]
 
-    increments = np.sqrt((np.square(cloudx - cloudx_shift) - np.square(cloudy - cloudy_shift)))
+    # Fixed the Euclidean distance calculation to use addition
+    increments = np.sqrt(np.square(cloudx - cloudx_shift) + np.square(cloudy - cloudy_shift))
 
-    times = [0.0]
-    for i in range(1, len(increments)):
-        times.append(np.sum(increments[1:i]))
+    # Fast O(n) array accumulation replaces the nested loop
+    times = np.cumsum(increments)
+    
+    # Pack the 1D arrays into 2D clouds for fn_fit
+    cloud_t_x = np.column_stack((times, cloudx))
+    cloud_t_y = np.column_stack((times, cloudy))
 
-    xt, xt_dt, xt_ddt = fn_fit(t, cloud, deg, bin_size)
-    yt, yt_dt, yt_ddt = fn_fit(t, cloud, deg, bin_size)
+    xt, xt_dt, xt_ddt = fn_fit(t_eval, cloud_t_x, deg, bin_size)
+    yt, yt_dt, yt_ddt = fn_fit(t_eval, cloud_t_y, deg, bin_size)
 
     return ((xt, yt), (xt_dt, yt_dt), (xt_ddt, yt_ddt))
-
 
 # Fast AI generated version for testing
 def get_disc_kernel(radius):
