@@ -1,245 +1,260 @@
+import os
+import glob
+import basics
 import cv2 as cv
 import numpy as np
-import glob
-import os
+import matplotlib.pyplot as plt
+from matplotlib.widgets import RectangleSelector, CheckButtons
 
-# Import your actual functions and classes
-from basics import LineDetector, paper_clean_fast, display_lines
-
-class LineInspectorUI:
-    def __init__(self, gray_img, gauss_img, custom_img, all_lines_img, lines):
-        self.img_gray = cv.cvtColor(gray_img, cv.COLOR_GRAY2BGR)
-        self.img_gauss = cv.cvtColor(gauss_img, cv.COLOR_GRAY2BGR)
-        self.img_custom = cv.cvtColor(custom_img, cv.COLOR_GRAY2BGR)
+class KinematicsGUI:
+    def __init__(self, image_path):
+        self.f = 2912.0
+        self.T = np.linspace(0, 1, 1000)
         
-        if len(all_lines_img.shape) == 2:
-            self.img_all_lines = cv.cvtColor(all_lines_img, cv.COLOR_GRAY2BGR)
-        else:
-            self.img_all_lines = all_lines_img.copy()
+        # 1. Load Image
+        self.img = cv.imread(image_path)
+        self.gray_img = cv.cvtColor(self.img, cv.COLOR_BGR2GRAY)
+        self.img_height, self.img_width = self.gray_img.shape
+        self.true_center_x = self.img_width / 2.0
+        self.true_center_y = self.img_height / 2.0
         
-        # Swap (row, col) from your detector to (x, y) for OpenCV
+        # 2. Setup Figure Layout
+        self.fig = plt.figure(figsize=(12, 8))
+        self.ax_img = self.fig.add_axes([0.05, 0.1, 0.7, 0.8])
+        self.ax_img.imshow(self.gray_img, cmap='gray')
+        self.ax_img.set_title("1. Drag to Crop -> Press Enter")
+        
+        # 3. Setup Interactive Selectors
+        self.rs = RectangleSelector(self.ax_img, self.on_crop_select,
+                                    useblit=True, button=[1], interactive=True)
+        self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
+        self.fig.canvas.mpl_connect('pick_event', self.on_line_pick)
+        self.fig.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
+        
+        # 4. Setup Toggle Checkboxes (Expanded for Scaling)
+        self.ax_check = self.fig.add_axes([0.78, 0.45, 0.20, 0.2])
+        self.check = CheckButtons(
+            self.ax_check, 
+            ['Show Velocity', 'Show Acceleration', 'Scale by Magnitude'], 
+            [True, True, False]
+        )
+        self.check.on_clicked(self.on_checkbox_toggle)
+        self.show_vel = True
+        self.show_acc = True
+        self.scale_by_mag = False
+        
+        # State variables
+        self.crop_box = None
         self.lines = []
-        for line in lines:
-            swapped_line = [(pt[1], pt[0]) for pt in line]
-            self.lines.append(swapped_line)
+        self.line_artists = []
+        self.current_energy = 0.0
+        self.last_mouse_event = None
         
-        self.current_view = 'interactive' 
-        self.mouse_pos = (0, 0)
-        self.hovered_idx = -1
-        self.locked_idx = -1
+        # Active Kinematics Data
+        self.active_x = None
+        self.active_y = None
+        self.active_vx = None
+        self.active_vy = None
+        self.active_ax = None
+        self.active_ay = None
         
-        self.window_name = "Line Inspector"
-        cv.namedWindow(self.window_name, cv.WINDOW_NORMAL)
-        cv.resizeWindow(self.window_name, 1200, 800)
-        cv.setMouseCallback(self.window_name, self._mouse_event)
-
-    def _mouse_event(self, event, x, y, flags, param):
-        self.mouse_pos = (x, y)
-        if event == cv.EVENT_MOUSEMOVE:
-            if self.current_view == 'interactive':
-                self.hovered_idx = self._get_closest_line_idx(x, y)
-        elif event == cv.EVENT_LBUTTONDOWN:
-            if self.current_view == 'interactive' and self.hovered_idx != -1:
-                if self.locked_idx == self.hovered_idx:
-                    self.locked_idx = -1
-                else:
-                    self.locked_idx = self.hovered_idx
-
-    def _get_closest_line_idx(self, mx, my, distance_threshold=15):
-        min_dist = float('inf')
-        closest_idx = -1
-        mouse_pt = np.array([mx, my])
+        # Curve-specific max magnitudes (for per-curve normalization)
+        self.active_max_v = 1.0
+        self.active_max_a = 1.0
         
-        for i, line in enumerate(self.lines):
-            for j in range(len(line) - 1):
-                pt1 = np.array(line[j])
-                pt2 = np.array(line[j+1])
-                
-                line_vec = pt2 - pt1
-                pt_vec = mouse_pt - pt1
-                line_len_sq = np.dot(line_vec, line_vec)
-                
-                if line_len_sq == 0:
-                    dist = np.linalg.norm(pt_vec)
-                else:
-                    t = max(0, min(1, np.dot(pt_vec, line_vec) / line_len_sq))
-                    proj = pt1 + t * line_vec
-                    dist = np.linalg.norm(mouse_pt - proj)
-                
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_idx = i
-                    
-        return closest_idx if min_dist <= distance_threshold else -1
-
-    def _draw_hud(self, img):
-        instructions = [
-            "[1] Original View",
-            "[2] Gaussian Clean",
-            "[3] Custom Clean",
-            "[4] All Lines (display_lines)",
-            "[5] Interactive Hover Mode",
-            "Click a line to Lock/Unlock"
-        ]
+        # Initialize quivers with valid dummy data
+        self.q_vel = self.ax_img.quiver([0], [0], [0], [0], color='green', angles='xy', scale_units='xy', scale=1, width=0.005, label='Velocity', zorder=5)
+        self.q_acc = self.ax_img.quiver([0], [0], [0], [0], color='red', angles='xy', scale_units='xy', scale=1, width=0.005, label='Acceleration', zorder=5)
+        self.ax_img.legend(loc='upper right')
         
-        mode_map = {'gray': 0, 'gauss': 1, 'custom': 2, 'all_lines': 3, 'interactive': 4}
-        active_idx = mode_map.get(self.current_view, 4)
+        # Initially hide the dummy vectors
+        self.q_vel.set_UVC([0], [0])
+        self.q_acc.set_UVC([0], [0])
         
-        for i, text in enumerate(instructions):
-            color = (0, 255, 255) if i == active_idx else (200, 200, 200)
-            cv.putText(img, text, (20, 40 + (i * 30)), cv.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        plt.show()
 
-    def _draw_line(self, img, line_points, color, thickness=3):
-        pts = np.array(line_points, np.int32).reshape((-1, 1, 2))
-        cv.polylines(img, [pts], isClosed=False, color=color, thickness=thickness)
+    def on_crop_select(self, eclick, erelease):
+        x1, y1 = int(eclick.xdata), int(eclick.ydata)
+        x2, y2 = int(erelease.xdata), int(erelease.ydata)
+        self.crop_box = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
 
-    def run(self):
-        while True:
-            if self.current_view == 'gray':
-                display_img = self.img_gray.copy()
-            elif self.current_view == 'gauss':
-                display_img = self.img_gauss.copy()
-            elif self.current_view == 'custom':
-                display_img = self.img_custom.copy()
-            elif self.current_view == 'all_lines':
-                display_img = self.img_all_lines.copy() 
-            else:
-                display_img = cv.addWeighted(self.img_gray, 0.4, np.zeros_like(self.img_gray), 0, 0)
-                
-                if self.locked_idx != -1:
-                    self._draw_line(display_img, self.lines[self.locked_idx], color=(0, 255, 0), thickness=4)
-                elif self.hovered_idx != -1:
-                    self._draw_line(display_img, self.lines[self.hovered_idx], color=(0, 0, 255), thickness=3)
-
-            self._draw_hud(display_img)
-            cv.imshow(self.window_name, display_img)
+    def on_key_press(self, event):
+        if event.key == 'enter' and self.crop_box is not None:
+            self.ax_img.set_title("Processing...")
+            self.fig.canvas.draw()
             
-            key = cv.waitKey(15) & 0xFF
+            x_min, y_min, x_max, y_max = self.crop_box
+            cropped_img = self.gray_img[y_min:y_max, x_min:x_max]
             
-            if key == 27: 
-                break
-            elif key == ord('1'):
-                self.current_view = 'gray'
-            elif key == ord('2'):
-                self.current_view = 'gauss'
-            elif key == ord('3'):
-                self.current_view = 'custom'
-            elif key == ord('4'):
-                self.current_view = 'all_lines'
-            elif key == ord('5'):
-                self.current_view = 'interactive'
-                
-        cv.destroyAllWindows()
+            blurred = cv.GaussianBlur(cropped_img, (5, 5), 0)
+            cleaned = cv.adaptiveThreshold(blurred, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 15)
+            
+            detector = basics.LineDetector(width=2, height=10, step=5)
+            local_lines = detector.findall_lines(cleaned)
+            
+            self.ax_img.clear()
+            self.ax_img.imshow(self.gray_img, cmap='gray')
+            
+            self.lines = []
+            self.line_artists = []
+            
+            for line in local_lines:
+                global_line = [(pt[1] + x_min, pt[0] + y_min) for pt in line]
+                if len(global_line) > 10:
+                    self.lines.append(global_line)
+                    pts = np.array(global_line)
+                    line_obj, = self.ax_img.plot(pts[:, 0], pts[:, 1], color='blue', alpha=0.5, picker=5, linewidth=2)
+                    self.line_artists.append(line_obj)
+            
+            # Re-initialize quivers
+            self.q_vel = self.ax_img.quiver([0], [0], [0], [0], color='green', angles='xy', scale_units='xy', scale=1, width=0.005, label='Velocity', zorder=5)
+            self.q_acc = self.ax_img.quiver([0], [0], [0], [0], color='red', angles='xy', scale_units='xy', scale=1, width=0.005, label='Acceleration', zorder=5)
+            self.q_vel.set_UVC([0], [0])
+            self.q_acc.set_UVC([0], [0])
+            self.ax_img.legend(loc='upper right')
+            
+            self.ax_img.set_title("2. Click a blue line to select it")
+            self.fig.canvas.draw()
 
-
-def select_image():
-    """Scans the current directory for images and prompts the user to select one."""
-    image_extensions = ('*.jpg', '*.jpeg', '*.png', '*.bmp')
-    image_files = []
-    
-    for ext in image_extensions:
-        image_files.extend(glob.glob(ext))
-        # Also check uppercase extensions
-        image_files.extend(glob.glob(ext.upper()))
-        
-    if not image_files:
-        print("No image files found in the current directory.")
-        return None
-
-    print("\n--- Available Images ---")
-    for i, file in enumerate(image_files):
-        print(f"[{i}] {file}")
-        
-    while True:
+    def on_line_pick(self, event):
         try:
-            choice = input(f"\nSelect an image (0 - {len(image_files)-1}) or 'q' to quit: ")
-            if choice.lower() == 'q':
-                return None
-            choice = int(choice)
-            if 0 <= choice < len(image_files):
-                return image_files[choice]
-            else:
-                print("Invalid choice. Try again.")
+            line_idx = self.line_artists.index(event.artist)
         except ValueError:
-            print("Please enter a valid number.")
-
-def get_cropped_grayscale(image_path):
-    """Loads an image, allows the user to crop it via GUI, and returns the grayscale crop."""
-    img = cv.imread(image_path)
-    if img is None:
-        print(f"Failed to load image: {image_path}")
-        return None
-
-    # Resize for the crop window if the image is massive, to ensure it fits on screen
-    screen_height = 800
-    h, w = img.shape[:2]
-    scale = 1.0
-    if h > screen_height:
-        scale = screen_height / h
-        display_img = cv.resize(img, (int(w * scale), int(h * scale)))
-    else:
-        display_img = img.copy()
-
-    print("\n--- Cropping Instructions ---")
-    print("1. Click and drag to select the region you want to process.")
-    print("2. Press SPACE or ENTER to confirm the crop.")
-    print("3. Press 'c' to cancel and use the whole image.")
-    
-    # Let user select ROI
-    roi = cv.selectROI("Select Crop Region (SPACE to confirm)", display_img, showCrosshair=True, fromCenter=False)
-    cv.destroyWindow("Select Crop Region (SPACE to confirm)")
-    
-    x, y, w_box, h_box = roi
-    
-    # If user cancelled or selected nothing, return full grayscale image
-    if w_box == 0 or h_box == 0:
-        print("No crop selected. Using the entire image.")
-        return cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+            return
+            
+        for artist in self.line_artists:
+            artist.set_color('blue')
+            artist.set_alpha(0.5)
+            
+        self.line_artists[line_idx].set_color('orange')
+        self.line_artists[line_idx].set_alpha(1.0)
         
-    # Scale coordinates back up if we resized the display image
-    real_x = int(x / scale)
-    real_y = int(y / scale)
-    real_w = int(w_box / scale)
-    real_h = int(h_box / scale)
-    
-    cropped_img = img[real_y:real_y+real_h, real_x:real_x+real_w]
-    return cv.cvtColor(cropped_img, cv.COLOR_BGR2GRAY)
+        raw_line = self.lines[line_idx]
+        (x, y), (vx, vy), (ax, ay) = basics.curve_fit(self.T, raw_line, bin_size=0.13, deg=2)
+        
+        self.active_x = x
+        self.active_y = y
+        self.active_vx = vx
+        self.active_vy = vy
+        self.active_ax = ax
+        self.active_ay = ay
+        
+        # Calculate the absolute max magnitudes for this specific curve to safely normalize display
+        self.active_max_v = np.max(np.hypot(vx, vy))
+        self.active_max_a = np.max(np.hypot(ax, ay))
+        
+        x_c = x - self.true_center_x
+        y_c = y - self.true_center_y
+        
+        u = x_c**2 + y_c**2 + self.f**2
+        A = x_c * vx + y_c * vy
+        B = vx**2 + vy**2 + x_c * ax + y_c * ay
+        
+        w = u**(-0.5)
+        w_dt = -(u**(-1.5)) * A
+        w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
+        
+        self.current_energy = basics.compute_projective_bending_energy(self.T, x_c, y_c, vx, vy, ax, ay, w, w_dt, w_ddt, self.f)
+        self.ax_img.set_title(f"Energy: {self.current_energy:.2f} | Hover to view kinematics")
+        
+        # Trigger redraw if mouse was already hovering
+        if self.last_mouse_event:
+            self.on_mouse_move(self.last_mouse_event)
+        self.fig.canvas.draw_idle()
 
+    def on_mouse_move(self, event):
+        if not event.inaxes == self.ax_img or self.active_x is None:
+            return
+            
+        self.last_mouse_event = event
+        mouse_x, mouse_y = event.xdata, event.ydata
+        
+        distances_sq = (self.active_x - mouse_x)**2 + (self.active_y - mouse_y)**2
+        nearest_idx = np.argmin(distances_sq)
+        
+        px, py = self.active_x[nearest_idx], self.active_y[nearest_idx]
+        u_v, v_v = self.active_vx[nearest_idx], self.active_vy[nearest_idx]
+        u_a, v_a = self.active_ax[nearest_idx], self.active_ay[nearest_idx]
+        
+        mag_v = np.hypot(u_v, v_v)
+        mag_a = np.hypot(u_a, v_a)
+        self.ax_img.set_title(f"Energy: {self.current_energy:.1f} | |Vel|: {mag_v:.0f}, |Acc|: {mag_a:.0f}")
+        
+        # Base fixed length (pixels) for unscaled behavior
+        fixed_disp_scale = 100.0
+        # Maximum allowed visual length (pixels) when scaled by magnitude
+        max_disp_scale = 200.0 
+        
+        if self.scale_by_mag:
+            # Proportionally scale based on the curve's maximum recorded magnitude
+            v_scale = (mag_v / (self.active_max_v + 1e-12)) * max_disp_scale
+            a_scale = (mag_a / (self.active_max_a + 1e-12)) * max_disp_scale
+        else:
+            # Strict normalization to the fixed displacement scale
+            v_scale = fixed_disp_scale
+            a_scale = fixed_disp_scale
+        
+        u_v_disp = (u_v / (mag_v + 1e-12)) * v_scale
+        v_v_disp = (v_v / (mag_v + 1e-12)) * v_scale
+        
+        u_a_disp = (u_a / (mag_a + 1e-12)) * a_scale
+        v_a_disp = (v_a / (mag_a + 1e-12)) * a_scale
+        
+        if self.show_vel:
+            self.q_vel.set_offsets(np.c_[[px], [py]])
+            self.q_vel.set_UVC([u_v_disp], [v_v_disp])
+        else:
+            self.q_vel.set_UVC([0], [0])
+            
+        if self.show_acc:
+            self.q_acc.set_offsets(np.c_[[px], [py]])
+            self.q_acc.set_UVC([u_a_disp], [v_a_disp])
+        else:
+            self.q_acc.set_UVC([0], [0])
+            
+        self.fig.canvas.draw_idle()
+
+    def on_checkbox_toggle(self, label):
+        if label == 'Show Velocity':
+            self.show_vel = not self.show_vel
+        elif label == 'Show Acceleration':
+            self.show_acc = not self.show_acc
+        elif label == 'Scale by Magnitude':
+            self.scale_by_mag = not self.scale_by_mag
+            
+        # Instantly apply changes without requiring a mouse movement
+        if self.last_mouse_event and self.last_mouse_event.inaxes == self.ax_img:
+            self.on_mouse_move(self.last_mouse_event)
+        else:
+            if not self.show_vel:
+                self.q_vel.set_UVC([0], [0])
+            if not self.show_acc:
+                self.q_acc.set_UVC([0], [0])
+            self.fig.canvas.draw_idle()
 
 if __name__ == "__main__":
-    # 1. Let user select the image
-    selected_image_path = select_image()
+    default_img = "crump_uncropped.jpeg"
+    image_files = glob.glob("*.jpeg") + glob.glob("*.jpg") + glob.glob("*.png")
+    image_files.sort()
     
-    if selected_image_path:
-        # 2. Let user crop the image (returns grayscale)
-        gray_img = get_cropped_grayscale(selected_image_path)
+    print("Available images in directory:")
+    for i, file in enumerate(image_files):
+        marker = " (Default)" if file == default_img else ""
+        print(f"  [{i}] {file}{marker}")
         
-        if gray_img is not None:
-            # 3. Pre-process the cropped grayscale image
-            blurred_img = cv.GaussianBlur(gray_img, (5, 5), 0)
-            cleaned_img = cv.adaptiveThreshold(
-                blurred_img, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 15
-            )
+    choice = input(f"\nEnter the number or filename of the image to load (Press Enter for '{default_img}'): ").strip()
+    
+    selected_path = default_img
+    if choice:
+        if choice.isdigit() and 0 <= int(choice) < len(image_files):
+            selected_path = image_files[int(choice)]
+        elif os.path.exists(choice):
+            selected_path = choice
+        else:
+            print(f"Warning: Could not find '{choice}'. Falling back to default.")
             
-            my_cleaned_img = paper_clean_fast(gray_img) 
-            
-            # 4. RUN REAL DETECTION 
-            print("\nRunning line detection (this may take a moment)...")
-            detector = LineDetector(width=2, height=10, step=5) 
-            lines = detector.findall_lines(cleaned_img)
-
-            m = 0
-            for line in lines:
-                if len(line) > m:
-                    max_line = line
-                m = len(line)
-
-            print("The line of maximum length is", line)
-            
-            all_lines_img = display_lines(cleaned_img, lines, thickness=2)
-            
-            print(f"Found {len(lines)} lines. Launching UI...")
-            
-            # 5. Launch Interactive UI
-            app = LineInspectorUI(gray_img, cleaned_img, my_cleaned_img, all_lines_img, lines)
-            app.run()
+    if not os.path.exists(selected_path):
+        print(f"Error: The file '{selected_path}' does not exist in this directory.")
+    else:
+        print(f"Launching Kinematics Explorer with: {selected_path}\n")
+        app = KinematicsGUI(selected_path)
