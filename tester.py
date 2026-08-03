@@ -3,7 +3,7 @@ import cv2 as cv
 import numpy as np
 import matplotlib.pyplot as plt
 
-img = cv.imread("curve.jpeg")
+img = cv.imread("crump_uncropped.jpeg")
 gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
 x_lim,y_lim = gray_img.shape
@@ -23,7 +23,7 @@ detector = basics.LineDetector(width=2, height=10, step=5)
 lines = detector.findall_lines(cleaned_img)
 lines.sort(key = lambda x: len(x))
 
-line = lines[-5]
+line = lines[-4]
 #print(line)
 
 all_lines_img = basics.display_lines(cleaned_img, [line], thickness=2)
@@ -34,13 +34,36 @@ plt.show()
 
 T = np.linspace(0, 1, 1000)
 (x, y), (vx, vy), (ax, ay) = basics.curve_fit(T, line, bin_size=0.13, deg=2)
+
+# Energy stuff
+img_height, img_width = gray_img.shape
+true_center_x = img_width / 2.0
+true_center_y = img_height / 2.0
+
+x_c = x - true_center_x
+y_c = y - true_center_y
+
+# 2. Compute depth base 'u'
+f = 2912.0
+u = x_c**2 + y_c**2 + f**2
+
+# 3. Compute w, w_dt, w_ddt for rho = 1
+A = x_c * vx + y_c * vy
+B = vx**2 + vy**2 + x_c * ax + y_c * ay
+
+w = u**(-0.5)
+w_dt = -(u**(-1.5)) * A
+w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
+f=2912.0
+energy = basics.compute_projective_bending_energy(T, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f)
+print(energy)
 #print(x)
 
 fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(10, 4))
 #axes[0].imshow(cleaned_img, cmap='gray')
 axes[1].imshow(cleaned_img, cmap='gray')
-axes[0].plot(T, vy^2 + vx^2, color='red', linewidth=2)
-#axes[0].plot(T, x, color='green', linewidth=2)
+axes[0].plot(T, y, color='red', linewidth=2)
+axes[0].plot(T, x, color='green', linewidth=2)
 #axes[1].plot(T, y, color='red', linewidth=2)
 #axes[1].plot(T, x, color='green', linewidth=2)
 #plt.xlim(0, y_lim)
