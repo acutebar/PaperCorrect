@@ -31,7 +31,7 @@ class KinematicsGUI:
         self.fig.canvas.mpl_connect('pick_event', self.on_line_pick)
         self.fig.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
         
-        # 4. Setup Toggle Checkboxes (Expanded for Scaling)
+        # 4. Setup Toggle Checkboxes
         self.ax_check = self.fig.add_axes([0.78, 0.45, 0.20, 0.2])
         self.check = CheckButtons(
             self.ax_check, 
@@ -58,16 +58,17 @@ class KinematicsGUI:
         self.active_ax = None
         self.active_ay = None
         
-        # Curve-specific max magnitudes (for per-curve normalization)
         self.active_max_v = 1.0
         self.active_max_a = 1.0
         
-        # Initialize quivers with valid dummy data
+        # FIX: Add a dedicated line artist just for the smooth fit!
+        self.fit_artist, = self.ax_img.plot([], [], color='red', linewidth=3, zorder=4)
+        
+        # Initialize quivers
         self.q_vel = self.ax_img.quiver([0], [0], [0], [0], color='green', angles='xy', scale_units='xy', scale=1, width=0.005, label='Velocity', zorder=5)
-        self.q_acc = self.ax_img.quiver([0], [0], [0], [0], color='red', angles='xy', scale_units='xy', scale=1, width=0.005, label='Acceleration', zorder=5)
+        self.q_acc = self.ax_img.quiver([0], [0], [0], [0], color='magenta', angles='xy', scale_units='xy', scale=1, width=0.005, label='Acceleration', zorder=5)
         self.ax_img.legend(loc='upper right')
         
-        # Initially hide the dummy vectors
         self.q_vel.set_UVC([0], [0])
         self.q_acc.set_UVC([0], [0])
         
@@ -106,9 +107,10 @@ class KinematicsGUI:
                     line_obj, = self.ax_img.plot(pts[:, 0], pts[:, 1], color='blue', alpha=0.5, picker=5, linewidth=2)
                     self.line_artists.append(line_obj)
             
-            # Re-initialize quivers
+            # Re-initialize visual elements
+            self.fit_artist, = self.ax_img.plot([], [], color='red', linewidth=3, zorder=4)
             self.q_vel = self.ax_img.quiver([0], [0], [0], [0], color='green', angles='xy', scale_units='xy', scale=1, width=0.005, label='Velocity', zorder=5)
-            self.q_acc = self.ax_img.quiver([0], [0], [0], [0], color='red', angles='xy', scale_units='xy', scale=1, width=0.005, label='Acceleration', zorder=5)
+            self.q_acc = self.ax_img.quiver([0], [0], [0], [0], color='magenta', angles='xy', scale_units='xy', scale=1, width=0.005, label='Acceleration', zorder=5)
             self.q_vel.set_UVC([0], [0])
             self.q_acc.set_UVC([0], [0])
             self.ax_img.legend(loc='upper right')
@@ -126,8 +128,9 @@ class KinematicsGUI:
             artist.set_color('blue')
             artist.set_alpha(0.5)
             
-        self.line_artists[line_idx].set_color('orange')
-        self.line_artists[line_idx].set_alpha(1.0)
+        # Highlight raw line in cyan
+        self.line_artists[line_idx].set_color('cyan')
+        self.line_artists[line_idx].set_alpha(0.8)
         
         raw_line = self.lines[line_idx]
         (x, y), (vx, vy), (ax, ay) = basics.curve_fit(self.T, raw_line, bin_size=0.13, deg=2)
@@ -139,9 +142,11 @@ class KinematicsGUI:
         self.active_ax = ax
         self.active_ay = ay
         
-        # Calculate the absolute max magnitudes for this specific curve to safely normalize display
         self.active_max_v = np.max(np.hypot(vx, vy))
         self.active_max_a = np.max(np.hypot(ax, ay))
+        
+        # PLOT THE SMOOTH FIT directly on top!
+        self.fit_artist.set_data(x, y)
         
         x_c = x - self.true_center_x
         y_c = y - self.true_center_y
@@ -157,7 +162,6 @@ class KinematicsGUI:
         self.current_energy = basics.compute_projective_bending_energy(self.T, x_c, y_c, vx, vy, ax, ay, w, w_dt, w_ddt, self.f)
         self.ax_img.set_title(f"Energy: {self.current_energy:.2f} | Hover to view kinematics")
         
-        # Trigger redraw if mouse was already hovering
         if self.last_mouse_event:
             self.on_mouse_move(self.last_mouse_event)
         self.fig.canvas.draw_idle()
@@ -180,17 +184,13 @@ class KinematicsGUI:
         mag_a = np.hypot(u_a, v_a)
         self.ax_img.set_title(f"Energy: {self.current_energy:.1f} | |Vel|: {mag_v:.0f}, |Acc|: {mag_a:.0f}")
         
-        # Base fixed length (pixels) for unscaled behavior
         fixed_disp_scale = 100.0
-        # Maximum allowed visual length (pixels) when scaled by magnitude
         max_disp_scale = 200.0 
         
         if self.scale_by_mag:
-            # Proportionally scale based on the curve's maximum recorded magnitude
             v_scale = (mag_v / (self.active_max_v + 1e-12)) * max_disp_scale
             a_scale = (mag_a / (self.active_max_a + 1e-12)) * max_disp_scale
         else:
-            # Strict normalization to the fixed displacement scale
             v_scale = fixed_disp_scale
             a_scale = fixed_disp_scale
         
@@ -222,7 +222,6 @@ class KinematicsGUI:
         elif label == 'Scale by Magnitude':
             self.scale_by_mag = not self.scale_by_mag
             
-        # Instantly apply changes without requiring a mouse movement
         if self.last_mouse_event and self.last_mouse_event.inaxes == self.ax_img:
             self.on_mouse_move(self.last_mouse_event)
         else:
