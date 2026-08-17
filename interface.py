@@ -1,6 +1,6 @@
 import os
 import glob
-import basics
+import detector
 import cv2 as cv
 import numpy as np
 import matplotlib.pyplot as plt
@@ -90,8 +90,8 @@ class KinematicsGUI:
             blurred = cv.GaussianBlur(cropped_img, (5, 5), 0)
             cleaned = cv.adaptiveThreshold(blurred, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 15)
             
-            detector = basics.LineDetector(width=2, height=10, step=5)
-            local_lines = detector.findall_lines(cleaned)
+            detec = detector.LineDetector(width=2, height=10, step=5)
+            local_lines = detec.findall_lines(cleaned)
             
             self.ax_img.clear()
             self.ax_img.imshow(self.gray_img, cmap='gray')
@@ -133,7 +133,7 @@ class KinematicsGUI:
         self.line_artists[line_idx].set_alpha(0.8)
         
         raw_line = self.lines[line_idx]
-        (x, y), (vx, vy), (ax, ay) = basics.curve_fit(self.T, raw_line, bin_size=0.13, deg=2)
+        (x, y), (vx, vy), (ax, ay) = detector.curve_fit(self.T, raw_line, bin_size=0.13, deg=2)
         
         self.active_x = x
         self.active_y = y
@@ -159,7 +159,7 @@ class KinematicsGUI:
         w_dt = -(u**(-1.5)) * A
         w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
         
-        self.current_energy = basics.compute_projective_bending_energy(self.T, x_c, y_c, vx, vy, ax, ay, w, w_dt, w_ddt, self.f)
+        self.current_energy = detector.compute_projective_bending_energy(self.T, x_c, y_c, vx, vy, ax, ay, w, w_dt, w_ddt, self.f)
         self.ax_img.set_title(f"Energy: {self.current_energy:.2f} | Hover to view kinematics")
         
         if self.last_mouse_event:
