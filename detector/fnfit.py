@@ -14,7 +14,7 @@ class Curve:
     def velocity_at(self, t):
         return curve_fit(np.array([t]), self.cloud)[1]
 
-    def velocity_at(self, t):
+    def acceleration(self, t):
         return curve_fit(np.array([t]), self.cloud)[2]
 
 # bump(variable, bin_size, starting_point, cur_bin, degree)
@@ -125,4 +125,3 @@ def curve_fit(t_eval, cloud, deg=2, bin_size=0.1):
     yt, yt_dt, yt_ddt = fn_fit(t_eval, cloud_t_y, deg, bin_size)
 
     return ((xt, yt), (xt_dt, yt_dt), (xt_ddt, yt_ddt))
-

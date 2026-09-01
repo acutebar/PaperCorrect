@@ -43,6 +43,9 @@ class KinematicsGUI:
         self.show_acc = True
         self.scale_by_mag = False
         
+        # UI Element for Total Energy
+        self.total_energy_text = self.fig.text(0.78, 0.75, "", fontsize=12, fontweight='bold')
+        
         # State variables
         self.crop_box = None
         self.lines = []
@@ -106,6 +109,26 @@ class KinematicsGUI:
                     pts = np.array(global_line)
                     line_obj, = self.ax_img.plot(pts[:, 0], pts[:, 1], color='blue', alpha=0.5, picker=5, linewidth=2)
                     self.line_artists.append(line_obj)
+            
+            # Compute and display total energy for all detected lines
+            total_e = 0.0
+            for line in self.lines:
+                (x_val, y_val), (vx_val, vy_val), (ax_val, ay_val) = detector.curve_fit(self.T, line, bin_size=0.13, deg=2)
+                x_c = x_val - self.true_center_x
+                y_c = y_val - self.true_center_y
+                u = x_c**2 + y_c**2 + self.f**2
+                A = x_c * vx_val + y_c * vy_val
+                B = vx_val**2 + vy_val**2 + x_c * ax_val + y_c * ay_val
+                
+                w = u**(-0.5)
+                w_dt = -(u**(-1.5)) * A
+                w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
+                
+                total_e += detector.compute_projective_bending_energy(
+                    self.T, x_c, y_c, vx_val, vy_val, ax_val, ay_val, w, w_dt, w_ddt, self.f
+                )
+            
+            self.total_energy_text.set_text(f"Total Energy:\n{total_e:.2f}")
             
             # Re-initialize visual elements
             self.fit_artist, = self.ax_img.plot([], [], color='red', linewidth=3, zorder=4)
