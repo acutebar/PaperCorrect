@@ -66,7 +66,7 @@ def bump_2d(u, v, du, dv, u0, v0, ju, jv, deg=2):
     
     return B_val, B_u, B_v, B_uu, B_vv, B_uv
 
-def surface_fit(u, v, cloud, deg=2, bin_size=0.5):
+def surface_fit(u, v, cloud, deg=2, bin_size=1):
     cloud_u, cloud_v, cloud_rho = cloud[:, 0], cloud[:, 1], cloud[:, 2]
     
     # Define bounds based on the target evaluation grid to prevent boundary collapse
@@ -192,7 +192,7 @@ def total_energy(T, curves, deformation_cloud, f=50.0):
         u, u_t, u_tt, v, v_t, v_tt, lam, lam_t, lam_tt = projective_kinematics(x, y, vx, vy, ax, ay, f)
         
         # 2. Evaluate rho surface and exact spatial derivatives at u(t), v(t)
-        rho, rho_u, rho_v, rho_uu, rho_vv, rho_uv = surface_fit(u, v, deformation_cloud, deg=2, bin_size=0.5)
+        rho, rho_u, rho_v, rho_uu, rho_vv, rho_uv = surface_fit(u, v, deformation_cloud, deg=2, bin_size=1)
         
         # 3. Multivariable chain rule for temporal derivatives
         rho_t = rho_u * u_t + rho_v * v_t
