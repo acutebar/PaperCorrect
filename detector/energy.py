@@ -44,9 +44,10 @@ def compute_projective_bending_energy(t, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f
     integrand = K_norm_sq / ((S + eps)**2.5)
     
     # Integrate over the parameter t using trapezoidal approximation
-    energy = np.trapezoid(integrand, t)
+    trapz_fn = getattr(np, 'trapezoid', getattr(np, 'trapz', None))
+    energy = trapz_fn(integrand, t)
     
-    return energy
+    return float(np.asarray(energy).item() if np.ndim(energy) > 0 else energy)
 
 
 def bump_2d(u, v, du, dv, u0, v0, ju, jv, deg=2):
@@ -101,18 +102,22 @@ def surface_fit(u, v, cloud, deg=2, bin_size=1):
             local_fits[(i, j)] = (coeffs, cu, cv)
 
     valid_fits = {k: v for k, v in local_fits.items() if v is not None}
-    if not valid_fits:
-        raise ValueError("No valid bins found. Point cloud is too sparse.")
 
     for i in range(num_bins_u):
         for j in range(num_bins_v):
             if local_fits[(i, j)] is None:
-                nearest_k = min(valid_fits.keys(), key=lambda k: (k[0]-i)**2 + (k[1]-j)**2)
-                source_coeffs, _, _ = valid_fits[nearest_k]
-                # Extrapolate using source shape but local center
                 cu = u_min + (i + 0.5) * bin_size
                 cv = v_min + (j + 0.5) * bin_size
-                local_fits[(i, j)] = (source_coeffs, cu, cv)
+                if valid_fits:
+                    nearest_k = min(valid_fits.keys(), key=lambda k: (k[0]-i)**2 + (k[1]-j)**2)
+                    source_coeffs, _, _ = valid_fits[nearest_k]
+                    local_fits[(i, j)] = (source_coeffs, cu, cv)
+                else:
+                    lu_all = cloud_u - cu
+                    lv_all = cloud_v - cv
+                    A_all = np.column_stack([np.ones_like(lu_all), lu_all, lv_all, lu_all**2, lu_all*lv_all, lv_all**2])
+                    local_coeffs, _, _, _ = np.linalg.lstsq(A_all, cloud_rho, rcond=None)
+                    local_fits[(i, j)] = (local_coeffs, cu, cv)
 
     g_val = np.zeros_like(u, dtype=float)
     g_u, g_v = np.zeros_like(u, dtype=float), np.zeros_like(u, dtype=float)
@@ -180,13 +185,17 @@ def total_energy(T, curves, deformation_cloud, f=50.0):
     then sums the energy using the original projective bending functional.
     """
     total_E = 0.0
-    t = np.array(T)
+    t = np.asarray(T)
     
     for curve in curves:
         # Extract kinematics from the 2D curve trace
         x, y = curve.point_at(t)
         vx, vy = curve.velocity_at(t)
         ax, ay = curve.acceleration_at(t)
+        
+        x, y = np.asarray(x).ravel(), np.asarray(y).ravel()
+        vx, vy = np.asarray(vx).ravel(), np.asarray(vy).ravel()
+        ax, ay = np.asarray(ax).ravel(), np.asarray(ay).ravel()
         
         # 1. Map continuous x(t), y(t) to stereographic u(t), v(t)
         u, u_t, u_tt, v, v_t, v_tt, lam, lam_t, lam_tt = projective_kinematics(x, y, vx, vy, ax, ay, f)
@@ -203,8 +212,8 @@ def total_energy(T, curves, deformation_cloud, f=50.0):
         w_dt = rho_t * lam + rho * lam_t
         w_ddt = rho_tt * lam + 2 * rho_t * lam_t + rho * lam_tt
         
-        # 5. Compute structural bending energy[cite: 4]
+        # 5. Compute structural bending energy
         energy = compute_projective_bending_energy(t, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f)
-        total_E += energy
+        total_E += float(energy)
         
-    return total_E
+    return float(total_E)

@@ -5,17 +5,25 @@ from typing import Union
 import math
 
 class Curve:
-    def __init__(self, cloud):
-        self.cloud = cloud
+    def __init__(self, cloud, deg=2, bin_size=0.1):
+        self.cloud = np.asarray(cloud, dtype=float)
+        self.deg = deg
+        self.bin_size = bin_size
 
     def point_at(self, t):
-        return curve_fit(np.array([t]), self.cloud)[0]
+        t_arr = np.asarray(t)
+        res = curve_fit(t_arr, self.cloud, deg=self.deg, bin_size=self.bin_size)
+        return res[0][0], res[0][1]
 
     def velocity_at(self, t):
-        return curve_fit(np.array([t]), self.cloud)[1]
+        t_arr = np.asarray(t)
+        res = curve_fit(t_arr, self.cloud, deg=self.deg, bin_size=self.bin_size)
+        return res[1][0], res[1][1]
 
     def acceleration_at(self, t):
-        return curve_fit(np.array([t]), self.cloud)[2]
+        t_arr = np.asarray(t)
+        res = curve_fit(t_arr, self.cloud, deg=self.deg, bin_size=self.bin_size)
+        return res[2][0], res[2][1]
 
 # bump(variable, bin_size, starting_point, cur_bin, degree)
 # https://personal.math.vt.edu/embree/math5466/lecture10.pdf
@@ -46,23 +54,29 @@ def bump(x, d, x0, j, deg=2):
     return B_x, B_dx, B_ddx
 
 def fn_fit(x, cloud, deg=2, bin_size=10):
-    # Assuming cloud is a NumPy array, slice directly instead of list comprehension
-    #print("Fitting global function. Received cloud: ", cloud)
+    cloud = np.asarray(cloud, dtype=float)
+    x_eval = np.asarray(x, dtype=float)
     cloudx = cloud[:, 0]
     cloudy = cloud[:, 1]
     x_max = np.max(cloudx)
     x_min = np.min(cloudx)
-    #print("Minimum parameter is", x_min)
     
-    num_bins = int((x_max - x_min) // bin_size) + 1
+    span = x_max - x_min
+    if span < 1e-12:
+        val = np.full_like(x_eval, cloudy[0] if len(cloudy) > 0 else 0.0)
+        zeros = np.zeros_like(x_eval)
+        return val, zeros, zeros
+        
+    num_bins = int(np.ceil(span / bin_size))
+    if num_bins < 1:
+        num_bins = 1
     local_fits = {}
 
     for i in range(num_bins):
         bin_start = x_min + i * bin_size
         bin_end = x_min + (i + 1) * bin_size
         
-        # Vectorized mask
-        mask = (cloudx >= bin_start) & (cloudx < bin_end)
+        mask = (cloudx >= bin_start) & (cloudx <= bin_end if i == num_bins - 1 else cloudx < bin_end)
         
         if np.sum(mask) < deg + 1:
             local_fits[i] = None
@@ -74,34 +88,46 @@ def fn_fit(x, cloud, deg=2, bin_size=10):
         local_poly = np.polynomial.Polynomial.fit(local_cloudx, local_cloudy, deg=deg)
         local_fits[i] = local_poly
 
+    valid_fits = {k: v for k, v in local_fits.items() if v is not None}
+    fit_deg = min(deg, max(0, len(cloudx) - 1))
+    global_poly = np.polynomial.Polynomial.fit(cloudx, cloudy, deg=fit_deg)
+
+    for i in range(num_bins):
+        if local_fits[i] is None:
+            if valid_fits:
+                nearest_k = min(valid_fits.keys(), key=lambda k: abs(k - i))
+                local_fits[i] = valid_fits[nearest_k]
+            else:
+                local_fits[i] = global_poly
+
     # Initialize zero arrays matching the size of x
-    global_value = np.zeros_like(x, dtype=float)
-    global_d1 = np.zeros_like(x, dtype=float)
-    global_d2 = np.zeros_like(x, dtype=float)
+    global_value = np.zeros_like(x_eval, dtype=float)
+    global_d1 = np.zeros_like(x_eval, dtype=float)
+    global_d2 = np.zeros_like(x_eval, dtype=float)
     
     for j in range(-deg, num_bins):
         i = max(0, min(j + (deg // 2), num_bins - 1))
-        if local_fits[i] is None:
-            print("WHAT KIND OF ERROR IS THIS")
-            continue
+        poly = local_fits[i]
 
-        P_x = local_fits[i](x)
-        P_dx = local_fits[i].deriv(1)(x)
-        P_ddx = local_fits[i].deriv(2)(x)
+        P_x = poly(x_eval)
+        P_dx = poly.deriv(1)(x_eval)
+        P_ddx = poly.deriv(2)(x_eval)
         
-        B_x, B_dx, B_ddx = bump(x, bin_size, x_min, j, deg)
+        B_x, B_dx, B_ddx = bump(x_eval, bin_size, x_min, j, deg)
         
         global_value += B_x * P_x
         global_d1 += (B_dx * P_x) + (B_x * P_dx)
         global_d2 += (B_ddx * P_x) + (2 * B_dx * P_dx) + (B_x * P_ddx)
 
-    print(f"Computed global value as {global_value[0]}")
     return global_value, global_d1, global_d2
 
 def curve_fit(t_eval, cloud, deg=2, bin_size=0.1):
-    # 1. REMOVED the argsort line assuming your cloud is sequentially traced
-    cloud = np.array(cloud)
-    print(cloud)
+    cloud = np.asarray(cloud, dtype=float)
+    if len(cloud) == 0:
+        t_arr = np.asarray(t_eval)
+        z = np.zeros_like(t_arr)
+        return ((z, z), (z, z), (z, z))
+
     cloudx = cloud[:, 0]
     cloudy = cloud[:, 1]
     
@@ -113,15 +139,17 @@ def curve_fit(t_eval, cloud, deg=2, bin_size=0.1):
     increments = np.sqrt(np.square(cloudx - cloudx_shift) + np.square(cloudy - cloudy_shift))
     times = np.cumsum(increments)
     
-    # 2. ADDED Normalization: scale the timeline to exactly [0.0, 1.0]
-    # (Add a tiny epsilon to prevent division by zero just in case)
-    times = times / (times[-1] + 1e-12)
+    total_len = times[-1]
+    if total_len > 1e-12:
+        times = times / total_len
+    else:
+        times = np.linspace(0.0, 1.0, len(cloud))
     
     # Pack the 1D arrays into 2D clouds for fn_fit
     cloud_t_x = np.column_stack((times, cloudx))
     cloud_t_y = np.column_stack((times, cloudy))
 
-    xt, xt_dt, xt_ddt = fn_fit(t_eval, cloud_t_x, deg, bin_size)
-    yt, yt_dt, yt_ddt = fn_fit(t_eval, cloud_t_y, deg, bin_size)
+    xt, xt_dt, xt_ddt = fn_fit(t_eval, cloud_t_x, deg=deg, bin_size=bin_size)
+    yt, yt_dt, yt_ddt = fn_fit(t_eval, cloud_t_y, deg=deg, bin_size=bin_size)
 
     return ((xt, yt), (xt_dt, yt_dt), (xt_ddt, yt_ddt))

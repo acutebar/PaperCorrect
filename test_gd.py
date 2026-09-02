@@ -123,8 +123,9 @@ def process_and_plot(image_path):
 
 if __name__ == '__main__':
     #process_and_plot("crump_uncropped.jpeg")
+    process_and_plot("kindanormalpaper.jpeg")
     #process_and_plot("crumpled.jpeg")
-    process_and_plot("curve.jpeg")
+    #process_and_plot("curve.jpeg")
     #process_and_plot("curvedsurface1.jpeg")
     #process_and_plot("curvedsurface2.jpeg")
     #process_and_plot("curvedsurface3.jpeg")
