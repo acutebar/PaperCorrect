@@ -13,4 +13,4 @@ from .fnfit import Curve
 from .fnfit import bump
 from .fnfit import fn_fit
 from .fnfit import curve_fit
-from .energy import compute_projective_bending_energy
+from .energy import compute_projective_bending_energy, bump_2d, surface_fit, projective_kinematics, total_energy
