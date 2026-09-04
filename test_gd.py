@@ -17,15 +17,15 @@ from detector.energy import surface_fit
 # =============================================================================
 # GLOBAL HYPERPARAMETERS - TWEAK THESE FOR TESTING
 # =============================================================================
-GD_STEPS = 100                   # Number of steps for Gradient Descent
+GD_STEPS = 400                   # Number of steps for Gradient Descent
 GD_NORM_CUTOFF = 1e-5            # Stopping threshold for gradient norm
 GD_LEARNING_RATE = 0.05          # Base learning rate for Adam optimizer
-GD_CONTROL_POINTS = 64           # Number of S^2 control points for deformation
+GD_CONTROL_POINTS = 500           # Number of S^2 control points for deformation
 
-TIME_DOMAIN_STEPS = 50           # Number of points to sample along each curve
-MESH_DENSITY = 80                # Grid resolution for 3D paper surface evaluation
+TIME_DOMAIN_STEPS = 100           # Number of points to sample along each curve
+MESH_DENSITY = 500                # Grid resolution for 3D paper surface evaluation
 
-CURVE_MIN_LENGTH = 10            # Minimum number of pixels to accept a curve
+CURVE_MIN_LENGTH = 20            # Minimum number of pixels to accept a curve
 CURVE_MAX_COUNT = 80             # Max number of curves to use in GD
 # =============================================================================
 

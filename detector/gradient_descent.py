@@ -43,10 +43,19 @@ def generate_uniform_rho_cloud(num_points=256, max_phi=None):
     
     return torch.column_stack([u, v, rho])
 
-
+def generate_flat_rho_cloud(num_points, max_angle=torch.pi/3):
+    # Call your existing function to preserve your exact (u, v) point distribution
+    cloud = generate_uniform_rho_cloud(num_points, max_angle)
+    u = cloud[:, 0]
+    v = cloud[:, 1]
+    
+    # Override rho to map to a flat plane at Z=1 instead of a unit sphere
+    flat_rho = (1.0 + u**2 + v**2) / (1.0 - u**2 - v**2)
+    
+    return torch.column_stack([u, v, flat_rho])
 
 def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.01, steps=500, eps=1e-5):
-    deformation_cloud = generate_uniform_rho_cloud(num_points, torch.pi/3)
+    deformation_cloud = generate_flat_rho_cloud(num_points, torch.pi/3)
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
     

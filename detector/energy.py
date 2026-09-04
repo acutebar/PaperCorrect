@@ -246,6 +246,100 @@ def total_energy(T, curves, cloud_coords, cloud_values, f = 50.0):
         
         # 5. Compute structural bending energy
         energy = compute_projective_bending_energy(t, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f)
+
         total_E = total_E + energy
+
+        # 6. Developability Regularization (True Euclidean Gaussian Curvature)
+        # Map rho(u,v) into 3D Cartesian space: r = rho * n
+        u = torch.as_tensor(u, dtype=torch.float64)
+        v = torch.as_tensor(v, dtype=torch.float64)
+        
+        # Map rho(u,v) into 3D Cartesian space: r = rho * n
+        D = 1.0 + u**2 + v**2
+        D2, D3 = D**2, D**3
+        
+        # Unit sphere normal vector n and its analytic stereographic derivatives
+        n = torch.stack([2.0*u/D, 2.0*v/D, (1.0-u**2-v**2)/D], dim=1)
+        D = 1.0 + u**2 + v**2
+        D2, D3 = D**2, D**3
+        
+        # Unit sphere normal vector n and its analytic stereographic derivatives
+        n = torch.stack([2.0*u/D, 2.0*v/D, (1.0-u**2-v**2)/D], dim=1)
+        
+        n_u = torch.stack([
+            2.0*(1.0-u**2+v**2)/D2, 
+            -4.0*u*v/D2, 
+            -4.0*u/D2
+        ], dim=1)
+        
+        n_v = torch.stack([
+            -4.0*u*v/D2, 
+            2.0*(1.0+u**2-v**2)/D2, 
+            -4.0*v/D2
+        ], dim=1)
+        
+        n_uu = torch.stack([
+            -4.0*u*(3.0-u**2+3.0*v**2)/D3,
+            -4.0*v*(1.0-3.0*u**2+v**2)/D3,
+            -4.0*(1.0-3.0*u**2+v**2)/D3
+        ], dim=1)
+        
+        n_vv = torch.stack([
+            -4.0*u*(1.0+u**2-3.0*v**2)/D3,
+            -4.0*v*(3.0+3.0*u**2-v**2)/D3,
+            -4.0*(1.0+u**2-3.0*v**2)/D3
+        ], dim=1)
+        
+        n_uv = torch.stack([
+            4.0*v*(-1.0+3.0*u**2-v**2)/D3,
+            4.0*u*(-1.0-u**2+3.0*v**2)/D3,
+            16.0*u*v/D3
+        ], dim=1)
+        
+        # Broadcast scalar fields to construct 3D tangent and curvature vectors
+        rho_ = rho.unsqueeze(1)
+        rho_u_ = rho_u.unsqueeze(1)
+        rho_v_ = rho_v.unsqueeze(1)
+        rho_uu_ = rho_uu.unsqueeze(1)
+        rho_vv_ = rho_vv.unsqueeze(1)
+        rho_uv_ = rho_uv.unsqueeze(1)
+        
+        r_u = rho_u_ * n + rho_ * n_u
+        r_v = rho_v_ * n + rho_ * n_v
+        r_uu = rho_uu_ * n + 2.0 * rho_u_ * n_u + rho_ * n_uu
+        r_vv = rho_vv_ * n + 2.0 * rho_v_ * n_v + rho_ * n_vv
+        r_uv = rho_uv_ * n + rho_u_ * n_v + rho_v_ * n_u + rho_ * n_uv
+        
+        # First Fundamental Form (Metric Tensor)
+        E = (r_u * r_u).sum(dim=1)
+        F = (r_u * r_v).sum(dim=1)
+        G = (r_v * r_v).sum(dim=1)
+        
+        # 3D Surface Normal
+        N_cross = torch.linalg.cross(r_u, r_v, dim=1)
+        N_norm = torch.linalg.norm(N_cross, dim=1, keepdim=True)
+        N_vec = N_cross / (N_norm + 1e-12)
+        
+        # Second Fundamental Form
+        L = (r_uu * N_vec).sum(dim=1)
+        M = (r_uv * N_vec).sum(dim=1)
+        N_sf = (r_vv * N_vec).sum(dim=1)
+        
+        # True Gaussian Curvature K
+        K = (L * N_sf - M**2) / (E * G - F**2 + 1e-12)
+        
+        # Integrate K^2 over the curve as a penalty
+        lambda_k = 0
+        k_penalty = torch.trapezoid(K**2, t)
+
+        # Mean Curvature H
+        H = (E * N_sf - 2.0 * F * M + G * L) / (2.0 * (E * G - F**2) + 1e-12)
+        
+        # Integrate H^2 over the curve to penalize extrinsic curling/folding
+        lambda_h = 0  # Tune this: higher means stiffer, flatter paper
+        h_penalty = torch.trapezoid(H**2, t)
+        
+        # Accumulate total energy
+        total_E = total_E + energy + (lambda_h * h_penalty) + (lambda_k * k_penalty) 
 
     return total_E
