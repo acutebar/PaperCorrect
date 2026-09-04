@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from typing import Union
 import math
 from .fnfit import bump, step_function, Curve
+import torch
 
 
 # (time_array, x_array, y_array, vx_array, vy_array, ax_array, ay_array, rho_restricted_to_curve(t), derivative of w, second derivative of w, focal length of camera)
@@ -40,15 +41,11 @@ def compute_projective_bending_energy(t, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f
     
     # Add epsilon to prevent division by zero in perfectly static segments
     eps = 1e-12
+    integrand = K_norm_sq / torch.clamp(S + eps, min=eps)**2.5 
     
-    integrand = K_norm_sq / ((S + eps)**2.5)
-    
-    # Integrate over the parameter t using trapezoidal approximation
-    trapz_fn = getattr(np, 'trapezoid', getattr(np, 'trapz', None))
-    energy = trapz_fn(integrand, t)
-    
-    return float(np.asarray(energy).item() if np.ndim(energy) > 0 else energy)
+    energy = torch.trapezoid(integrand, t)
 
+    return energy
 
 def bump_2d(u, v, du, dv, u0, v0, ju, jv, deg=2):
     """
@@ -68,11 +65,13 @@ def bump_2d(u, v, du, dv, u0, v0, ju, jv, deg=2):
     return B_val, B_u, B_v, B_uu, B_vv, B_uv
 
 def surface_fit(u, v, cloud, deg=2, bin_size=1):
+    u = torch.as_tensor(u, dtype=cloud.dtype, device=cloud.device)
+    v = torch.as_tensor(v, dtype=cloud.dtype, device=cloud.device)
     cloud_u, cloud_v, cloud_rho = cloud[:, 0], cloud[:, 1], cloud[:, 2]
     
     # Define bounds based on the target evaluation grid to prevent boundary collapse
-    u_min, u_max = np.min(u), np.max(u)
-    v_min, v_max = np.min(v), np.max(v)
+    u_min, u_max = float(torch.min(u)), float(torch.max(u))
+    v_min, v_max = float(torch.min(v)), float(torch.max(v))
     
     num_bins_u = int((u_max - u_min) // bin_size) + 1
     num_bins_v = int((v_max - v_min) // bin_size) + 1
@@ -91,14 +90,14 @@ def surface_fit(u, v, cloud, deg=2, bin_size=1):
             
             mask = (cloud_u >= bu_start) & (cloud_u < bu_end) & (cloud_v >= bv_start) & (cloud_v < bv_end)
             
-            if np.sum(mask) < 6: 
+            if torch.sum(mask) < 6: 
                 local_fits[(i, j)] = None
                 continue
                 
             # Center coordinates to prevent explosive quadratic coefficients
             lu, lv, lr = cloud_u[mask] - cu, cloud_v[mask] - cv, cloud_rho[mask]
-            A = np.column_stack([np.ones_like(lu), lu, lv, lu**2, lu*lv, lv**2])
-            coeffs, _, _, _ = np.linalg.lstsq(A, lr, rcond=None)
+            A = torch.column_stack([torch.ones_like(lu), lu, lv, lu**2, lu*lv, lv**2])
+            coeffs = torch.linalg.pinv(A) @ lr
             local_fits[(i, j)] = (coeffs, cu, cv)
 
     valid_fits = {k: v for k, v in local_fits.items() if v is not None}
@@ -115,13 +114,16 @@ def surface_fit(u, v, cloud, deg=2, bin_size=1):
                 else:
                     lu_all = cloud_u - cu
                     lv_all = cloud_v - cv
-                    A_all = np.column_stack([np.ones_like(lu_all), lu_all, lv_all, lu_all**2, lu_all*lv_all, lv_all**2])
-                    local_coeffs, _, _, _ = np.linalg.lstsq(A_all, cloud_rho, rcond=None)
+                    A_all = torch.column_stack([torch.ones_like(lu_all), lu_all, lv_all, lu_all**2, lu_all*lv_all, lv_all**2])
+                    local_coeffs = torch.linalg.pinv(A_all) @ cloud_rho
                     local_fits[(i, j)] = (local_coeffs, cu, cv)
 
-    g_val = np.zeros_like(u, dtype=float)
-    g_u, g_v = np.zeros_like(u, dtype=float), np.zeros_like(u, dtype=float)
-    g_uu, g_vv, g_uv = np.zeros_like(u, dtype=float), np.zeros_like(u, dtype=float), np.zeros_like(u, dtype=float)
+    g_val = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
+    g_u   = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
+    g_v   = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
+    g_uu  = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
+    g_vv  = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
+    g_uv  = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
 
     for ju in range(-deg, num_bins_u):
         for jv in range(-deg, num_bins_v):
@@ -137,11 +139,19 @@ def surface_fit(u, v, cloud, deg=2, bin_size=1):
             P_val = c0 + c1*du_val + c2*dv_val + c3*du_val**2 + c4*du_val*dv_val + c5*dv_val**2
             P_u = c1 + 2*c3*du_val + c4*dv_val
             P_v = c2 + c4*du_val + 2*c5*dv_val
-            P_uu = 2*c3 * np.ones_like(u)
-            P_vv = 2*c5 * np.ones_like(u)
-            P_uv = c4 * np.ones_like(u)
+            P_uu = 2*c3 * torch.ones_like(u)
+            P_vv = 2*c5 * torch.ones_like(u)
+            P_uv = c4 * torch.ones_like(u)
             
-            B_val, B_u, B_v, B_uu, B_vv, B_uv = bump_2d(u, v, bin_size, bin_size, u_min, v_min, ju, jv, deg)
+            B_val, B_u, B_v, B_uu, B_vv, B_uv = bump_2d(u.numpy(), v.numpy(), bin_size, bin_size, u_min, v_min, ju, jv, deg)
+            
+            # Convert immediately to PyTorch tensors for multiplication
+            B_val = torch.as_tensor(B_val_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
+            B_u   = torch.as_tensor(B_u_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
+            B_v   = torch.as_tensor(B_v_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
+            B_uu  = torch.as_tensor(B_uu_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
+            B_vv  = torch.as_tensor(B_vv_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
+            B_uv  = torch.as_tensor(B_uv_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
             
             g_val += B_val * P_val
             g_u += B_u * P_val + B_val * P_u
@@ -150,7 +160,7 @@ def surface_fit(u, v, cloud, deg=2, bin_size=1):
             g_vv += B_vv * P_val + 2 * B_v * P_v + B_val * P_vv
             g_uv += B_uv * P_val + B_u * P_v + B_v * P_u + B_val * P_uv
 
-    return g_val, g_u, g_v, g_uu, g_vv, g_uv# Updated surface_fit for detector.py
+    return g_val, g_u, g_v, g_uu, g_vv, g_uv
 
 def projective_kinematics(x, y, vx, vy, ax, ay, f):
     """
@@ -179,20 +189,21 @@ def projective_kinematics(x, y, vx, vy, ax, ay, f):
     
     return u, u_t, u_tt, v, v_t, v_tt, lam, lam_t, lam_tt
 
-def total_energy(T, curves, deformation_cloud, f=50.0):
-    """
-    Evaluates exact kinematics and algebraic chain rule across all curves,
-    then sums the energy using the original projective bending functional.
-    """
-    total_E = 0.0
-    t = np.asarray(T)
-    
+def total_energy(T, curves, cloud_coords, cloud_values, f = 50.0):
+    total_E = torch.tensor(0.0, dtype=torch.float64)
+    t = torch.as_tensor(T)
+
+    # convert to torch and extract value list
+    #deformation_cloud = torch.as_tensor(deformation_cloud, dtype=torch.float64)
+    #cloud_coords = deformation_cloud[:, :2]
+    #cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
+    deformation_cloud = torch.column_stack([cloud_coords, cloud_values])
+
     for curve in curves:
-        # Extract kinematics from the 2D curve trace
-        x, y = curve.point_at(t)
+        x,y = curve.point_at(t)
         vx, vy = curve.velocity_at(t)
         ax, ay = curve.acceleration_at(t)
-        
+
         x, y = np.asarray(x).ravel(), np.asarray(y).ravel()
         vx, vy = np.asarray(vx).ravel(), np.asarray(vy).ravel()
         ax, ay = np.asarray(ax).ravel(), np.asarray(ay).ravel()
@@ -202,6 +213,23 @@ def total_energy(T, curves, deformation_cloud, f=50.0):
         
         # 2. Evaluate rho surface and exact spatial derivatives at u(t), v(t)
         rho, rho_u, rho_v, rho_uu, rho_vv, rho_uv = surface_fit(u, v, deformation_cloud, deg=2, bin_size=1)
+
+        # Convert NumPy kinematics to PyTorch tensors before mixing with rho
+        u_t = torch.as_tensor(u_t, dtype=torch.float64)
+        u_tt = torch.as_tensor(u_tt, dtype=torch.float64)
+        v_t = torch.as_tensor(v_t, dtype=torch.float64)
+        v_tt = torch.as_tensor(v_tt, dtype=torch.float64)
+        
+        lam = torch.as_tensor(lam, dtype=torch.float64)
+        lam_t = torch.as_tensor(lam_t, dtype=torch.float64)
+        lam_tt = torch.as_tensor(lam_tt, dtype=torch.float64)
+
+        x = torch.as_tensor(x, dtype=torch.float64)
+        y = torch.as_tensor(y, dtype=torch.float64)
+        vx = torch.as_tensor(vx, dtype=torch.float64)
+        vy = torch.as_tensor(vy, dtype=torch.float64)
+        ax = torch.as_tensor(ax, dtype=torch.float64)
+        ay = torch.as_tensor(ay, dtype=torch.float64)
         
         # 3. Multivariable chain rule for temporal derivatives
         rho_t = rho_u * u_t + rho_v * v_t
@@ -214,6 +242,6 @@ def total_energy(T, curves, deformation_cloud, f=50.0):
         
         # 5. Compute structural bending energy
         energy = compute_projective_bending_energy(t, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f)
-        total_E += float(energy)
-        
-    return float(total_E)
+        total_E = total_E + energy
+
+    return total_E
