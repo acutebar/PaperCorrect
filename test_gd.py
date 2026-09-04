@@ -75,6 +75,7 @@ class GDFrontEnd:
         self.img_bgr = cv.imread(image_path)
         if self.img_bgr is None:
             raise FileNotFoundError(f"Could not load image: {image_path}")
+        self.img_rgb = cv.cvtColor(self.img_bgr, cv.COLOR_BGR2RGB)
         self.gray_img = cv.cvtColor(self.img_bgr, cv.COLOR_BGR2GRAY)
         self.img_h, self.img_w = self.gray_img.shape
         self.f_pixels = get_focal_length_pixels(image_path)
@@ -89,6 +90,9 @@ class GDFrontEnd:
         self.scatter_artist = None
         self.optimized_cloud = None
         self.texture_mode = True
+        self.wireframe_mode = False
+        self.rs = None
+        self.key_cid = None
 
         # Precomputed 3D data for interactive toggles
         self.X_3D = None
@@ -142,7 +146,7 @@ class GDFrontEnd:
         self.btn_reset.on_clicked(self.on_reset_crop)
 
         # Key press handler
-        self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
+        self.key_cid = self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
         self.fig.canvas.draw_idle()
 
     def on_crop_select(self, eclick, erelease):
@@ -170,6 +174,23 @@ class GDFrontEnd:
 
     def start_pipeline(self):
         """Extracts curves, runs gradient descent, and plots 3D embeddings."""
+        # Cleanly disconnect 2D selection tools and event callbacks so they do not interfere with 3D orbit/rotation
+        if self.rs is not None:
+            self.rs.set_active(False)
+            self.rs.disconnect_events()
+            self.rs = None
+
+        if self.key_cid is not None:
+            self.fig.canvas.mpl_disconnect(self.key_cid)
+            self.key_cid = None
+
+        # Reset any toolbar pan/zoom modes
+        if self.fig.canvas.toolbar is not None and getattr(self.fig.canvas.toolbar, 'mode', None):
+            if self.fig.canvas.toolbar.mode == 'zoom rect':
+                self.fig.canvas.toolbar.zoom()
+            elif self.fig.canvas.toolbar.mode == 'pan/zoom':
+                self.fig.canvas.toolbar.pan()
+
         # 1. Determine ROI bounds
         if self.crop_box is not None:
             x_min, y_min, x_max, y_max = self.crop_box
@@ -286,9 +307,10 @@ class GDFrontEnd:
         self.Y_3D = W_paper * Y_img
         self.Z_3D = W_paper * self.f_pixels
 
-        # Build facecolors for texture mapping from grayscale image
-        resized_crop = cv.resize(cropped_img, (grid_res - 1, grid_res - 1)).astype(float) / 255.0
-        self.facecolors_texture = plt.cm.gray(resized_crop)
+        # Build facecolors for texture mapping (full RGB color if available)
+        cropped_rgb = self.img_rgb[y_min:y_max, x_min:x_max]
+        resized_texture = cv.resize(cropped_rgb, (grid_res - 1, grid_res - 1)).astype(float) / 255.0
+        self.facecolors_texture = np.clip(resized_texture, 0.0, 1.0)
         # Normalized depth for viridis colormap
         z_norm = (self.Z_3D - self.Z_3D.min()) / (self.Z_3D.max() - self.Z_3D.min() + 1e-8)
         self.facecolors_viridis = plt.cm.viridis(z_norm[:-1, :-1])
@@ -359,7 +381,9 @@ class GDFrontEnd:
         self.surface_artist = self.ax1.plot_surface(
             self.X_3D, self.Y_3D, self.Z_3D,
             facecolors=self.facecolors_texture if self.texture_mode else self.facecolors_viridis,
-            shade=False, alpha=0.92, edgecolor='none'
+            shade=False, alpha=0.92,
+            edgecolor='black' if self.wireframe_mode else 'none',
+            linewidth=0.5 if self.wireframe_mode else 0.0
         )
 
         self.curve_artists = []
@@ -378,7 +402,9 @@ class GDFrontEnd:
         self.ax2 = self.fig.add_subplot(1, 2, 2, projection='3d')
         self.sphere_artist = self.ax2.plot_surface(
             self.Xs_3D, self.Ys_3D, self.Zs_3D,
-            cmap='plasma', alpha=0.82, edgecolor='none'
+            cmap='plasma', alpha=0.82,
+            edgecolor='black' if self.wireframe_mode else 'none',
+            linewidth=0.4 if self.wireframe_mode else 0.0
         )
 
         # Plot control points on S^2
@@ -400,7 +426,7 @@ class GDFrontEnd:
         self.check = CheckButtons(
             self.ax_check,
             ['Show Curves', 'Paper Texture', 'Wireframe'],
-            [True, self.texture_mode, False]
+            [True, self.texture_mode, self.wireframe_mode]
         )
         self.check.on_clicked(self.on_checkbox_toggle)
 
@@ -433,13 +459,19 @@ class GDFrontEnd:
             self.surface_artist = self.ax1.plot_surface(
                 self.X_3D, self.Y_3D, self.Z_3D,
                 facecolors=self.facecolors_texture if self.texture_mode else self.facecolors_viridis,
-                shade=False, alpha=0.92, edgecolor='none'
+                shade=False, alpha=0.92,
+                edgecolor='black' if self.wireframe_mode else 'none',
+                linewidth=0.5 if self.wireframe_mode else 0.0
             )
         elif label == 'Wireframe':
-            # Toggle wireframe edges on paper surface
-            edgecolor = 'black' if self.surface_artist.get_edgecolor()[0][3] == 0 else 'none'
+            self.wireframe_mode = not self.wireframe_mode
+            edgecolor = 'black' if self.wireframe_mode else 'none'
+            lw_surf = 0.5 if self.wireframe_mode else 0.0
+            lw_sph = 0.4 if self.wireframe_mode else 0.0
             self.surface_artist.set_edgecolor(edgecolor)
+            self.surface_artist.set_linewidth(lw_surf)
             self.sphere_artist.set_edgecolor(edgecolor)
+            self.sphere_artist.set_linewidth(lw_sph)
 
         self.fig.canvas.draw_idle()
 
