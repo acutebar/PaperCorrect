@@ -143,7 +143,7 @@ def surface_fit(u, v, cloud, deg=2, bin_size=1):
             P_vv = 2*c5 * torch.ones_like(u)
             P_uv = c4 * torch.ones_like(u)
             
-            B_val, B_u, B_v, B_uu, B_vv, B_uv = bump_2d(u.numpy(), v.numpy(), bin_size, bin_size, u_min, v_min, ju, jv, deg)
+            B_val_np, B_u_np, B_v_np, B_uu_np, B_vv_np, B_uv_np = bump_2d(u.detach().cpu().numpy(), v.detach().cpu().numpy(), bin_size, bin_size, u_min, v_min, ju, jv, deg)
             
             # Convert immediately to PyTorch tensors for multiplication
             B_val = torch.as_tensor(B_val_np, dtype=cloud_rho.dtype, device=cloud_rho.device)

@@ -1,4 +1,5 @@
 import numpy as np
+import math
 from scipy.optimize import minimize
 from .energy import (
     surface_fit,
@@ -23,7 +24,7 @@ def generate_uniform_rho_cloud(num_points=256, max_phi=None):
     if USE_CONE_SAMPLING and max_phi is not None:
         # Uniform area sampling on a spherical cap of half-angle max_phi:
         # cos(phi) runs from 1 down to cos(max_phi)
-        cos_max = torch.cos(max_phi)
+        cos_max = math.cos(max_phi)
         phi = torch.arccos(1.0 - (indices / num_points) * (1.0 - cos_max))
     else:
         # Revert: Sample full half-sphere [0, pi/2]
@@ -60,4 +61,4 @@ def run_gradient_descent(t, curves, f = 50.0, num_points=256, step=lambda n: 0.2
             cloud_values -= step(i) * cloud_values.grad
             cloud_values.grad.zero_()
 
-    return torch.column_stack[cloud_coords, cloud_values]
+    return torch.column_stack([cloud_coords, cloud_values])
