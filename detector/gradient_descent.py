@@ -45,20 +45,26 @@ def generate_uniform_rho_cloud(num_points=256, max_phi=None):
 
 
 
-def run_gradient_descent(t, curves, f = 50.0, num_points=256, step=lambda n: 0.2, steps=500, eps=1e-5):
+def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.01, steps=500, eps=1e-5):
     deformation_cloud = generate_uniform_rho_cloud(num_points, torch.pi/3)
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
+    
+    optimizer = torch.optim.Adam([cloud_values], lr=learning_rate)
 
     for i in range(steps):
+        optimizer.zero_grad()
         TE = total_energy(t, curves, cloud_coords, cloud_values, f)
         TE.backward()
+        
         grad_norm = cloud_values.grad.norm().item()
+        if (i + 1) % max(1, steps // 10) == 0 or i == 0 or i == steps - 1:
+            print(f"  [GD Step {i+1:3d}/{steps}] Energy: {TE.item():.4f} | Grad Norm: {grad_norm:.6f}")
+            
         if grad_norm < eps:
+            print(f"  [GD] Converged at step {i+1} with gradient norm {grad_norm:.6e}")
             break
-
-        with torch.no_grad():
-            cloud_values -= step(i) * cloud_values.grad
-            cloud_values.grad.zero_()
+            
+        optimizer.step()
 
     return torch.column_stack([cloud_coords, cloud_values])
