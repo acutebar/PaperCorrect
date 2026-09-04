@@ -141,15 +141,18 @@ class PaperCorrectApp:
         rho_mesh_tensor = surface_fit(u_mesh, v_mesh, opt_cloud, bin_size=0.5)[0]
         rho_mesh = rho_mesh_tensor.detach().numpy().reshape(X.shape)
         
-        Z = rho_mesh / R  # Paper depth embedding
+        # TRUE 3D GEOMETRY: P = rho * (X/R, Y/R, f/R)
+        P_X = rho_mesh * (X / R)
+        P_Y = rho_mesh * (Y / R)
+        P_Z = rho_mesh * (self.f_pixels / R)
         
-        # Interpolator for curve placement
-        interp = RegularGridInterpolator((Y_grid, X_grid), Z, bounds_error=False, fill_value=None)
+        # Interpolator for curve placement (interpolate rho, not depth)
+        interp = RegularGridInterpolator((Y_grid, X_grid), rho_mesh, bounds_error=False, fill_value=None)
         
         # 5. Visualization Dashboard
-        self.show_results(cropped_rgb, selected_lines, curves_gd, T, X, Y, Z, interp, x_min, y_min, w, h, cloud_pts, cloud_vals)
+        self.show_results(cropped_rgb, selected_lines, curves_gd, T, P_X, P_Y, P_Z, interp, x_min, y_min, w, h, cloud_pts, cloud_vals)
 
-    def show_results(self, cropped_rgb, selected_lines, curves_gd, T, X, Y, Z, interp, x_min, y_min, w, h, cloud_pts, cloud_vals):
+    def show_results(self, cropped_rgb, selected_lines, curves_gd, T, P_X, P_Y, P_Z, interp, x_min, y_min, w, h, cloud_pts, cloud_vals):
         fig = plt.figure(figsize=(14, 7))
         
         # Left Subplot: 2D Detection
@@ -167,26 +170,38 @@ class PaperCorrectApp:
         # Flip to match surface coordinate orientation
         tex = tex[::-1, :, :] 
         
-        ax_3d.plot_surface(X, Y, Z, facecolors=tex, shade=False, alpha=0.9, edgecolor='none')
+        ax_3d.plot_surface(P_X, P_Y, P_Z, facecolors=tex, shade=False, alpha=0.9, edgecolor='none')
         ax_3d.set_title("3D Reconstructed Paper Surface")
-        ax_3d.set_xlabel("X"); ax_3d.set_ylabel("Y"); ax_3d.set_zlabel("Depth (Z)")
+        ax_3d.set_xlabel("X (Camera Space)"); ax_3d.set_ylabel("Y (Camera Space)"); ax_3d.set_zlabel("Depth (Z)")
         
         # Overlay Curves
         for i, (line_raw, curve_gd) in enumerate(zip(selected_lines, curves_gd)):
-            # 2D Plot
+            # 2D Plot (line_raw points are already local to the cropped image)
             pts = np.array(line_raw)
-            ax_2d.plot(pts[:, 1] - x_min, pts[:, 0] - y_min, 'r.', markersize=2)
+            ax_2d.plot(pts[:, 1], pts[:, 0], 'r.', markersize=2)
             
-            # 3D Plot
+            # 2D Fitted Curves
             fit_x, fit_y = curve_gd.point_at(T)
             cx, cy = fit_x, fit_y
             
-            # Crop to ROI to avoid extrapolating way outside
+            # Overlay fitted GD curves back onto 2D image
+            plot_x = cx + w/2.0 - x_min
+            plot_y = cy + h/2.0 - y_min
+            ax_2d.plot(plot_x, plot_y, 'b-', linewidth=1, alpha=0.7)
+            
+            # 3D Plot - Map image points to true 3D rays
             mask = (cx >= x_min - w/2) & (cx <= x_min + w/2) & (cy >= y_min - h/2) & (cy <= y_min + h/2)
             cx, cy = cx[mask], cy[mask]
+            
             if len(cx) > 0:
-                cz = interp((cy, cx))
-                ax_3d.plot(cx, cy, cz, color='cyan', linewidth=2.5, zorder=10)
+                rho_curve = interp((cy, cx))
+                R_curve = np.sqrt(cx**2 + cy**2 + self.f_pixels**2)
+                
+                curve_3d_x = rho_curve * (cx / R_curve)
+                curve_3d_y = rho_curve * (cy / R_curve)
+                curve_3d_z = rho_curve * (self.f_pixels / R_curve)
+                
+                ax_3d.plot(curve_3d_x, curve_3d_y, curve_3d_z, color='cyan', linewidth=2.5, zorder=10)
         
         ax_3d.view_init(elev=25, azim=-65)
         plt.tight_layout()
@@ -194,8 +209,27 @@ class PaperCorrectApp:
 
 if __name__ == "__main__":
     img_files = [f for f in sorted(glob.glob("*.jpeg") + glob.glob("*.jpg") + glob.glob("*.png")) if not f.startswith("test_")]
-    default = "curve.jpeg"
-    target = sys.argv[1] if len(sys.argv) > 1 and os.path.exists(sys.argv[1]) else default
-    if not os.path.exists(target) and img_files: target = img_files[0]
     
+    if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
+        target = sys.argv[1]
+    else:
+        print("Available images:")
+        for i, f in enumerate(img_files):
+            print(f"[{i}] {f}")
+        try:
+            choice = input(f"Select image index or type filename (default 'curve.jpeg'): ").strip()
+        except EOFError:
+            choice = ""
+            
+        if not choice:
+            target = "curve.jpeg"
+        elif choice.isdigit() and int(choice) < len(img_files):
+            target = img_files[int(choice)]
+        else:
+            target = choice
+            
+        if not os.path.exists(target) and img_files: 
+            target = img_files[0]
+            print(f"File not found, defaulting to {target}")
+            
     app = PaperCorrectApp(target)
