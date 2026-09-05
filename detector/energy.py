@@ -40,15 +40,22 @@ def compute_projective_bending_energy(t, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f
     S = term1 + term2 + term3
     
     # Add epsilon to prevent division by zero in perfectly static segments
+    trim = max(1, len(t) // 10) if len(t) > 10 else 0
     eps = 1e-12
     if torch.is_tensor(S):
         integrand = K_norm_sq / torch.clamp(S + eps, min=eps)**2.5 
-        energy = torch.trapezoid(integrand, t)
+        if trim > 0:
+            energy = torch.trapezoid(integrand[trim:-trim], t[trim:-trim])
+        else:
+            energy = torch.trapezoid(integrand, t)
         return energy
     else:
         integrand = K_norm_sq / (np.maximum(S + eps, eps)**2.5)
         trapz_fn = getattr(np, 'trapezoid', getattr(np, 'trapz', None))
-        energy = trapz_fn(integrand, t)
+        if trim > 0:
+            energy = trapz_fn(integrand[trim:-trim], t[trim:-trim])
+        else:
+            energy = trapz_fn(integrand, t)
         return float(np.asarray(energy).item() if np.ndim(energy) > 0 else energy)
 
 def bump_2d(u, v, du, dv, u0, v0, ju, jv, deg=2):
