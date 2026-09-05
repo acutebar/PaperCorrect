@@ -11,7 +11,7 @@ from scipy.interpolate import RegularGridInterpolator
 from PIL import Image, ExifTags
 
 import detector
-from detector.gradient_descent import run_gradient_descent, generate_flat_rho_cloud
+from detector.gradient_descent import run_gradient_descent, generate_flat_rho_cloud, run_multi_start_optimization
 from detector.energy import surface_fit, total_energy
 
 # =============================================================================
@@ -23,10 +23,11 @@ GD_LEARNING_RATE = 0.05
 GD_CONTROL_POINTS = 64           
 
 TIME_DOMAIN_STEPS = 50           
-MESH_DENSITY = 80                
+MESH_DENSITY = 250                
 
-CURVE_MIN_LENGTH = 10            
-CURVE_MAX_COUNT = 80             
+CURVE_MIN_LENGTH = 5            
+CURVE_MAX_COUNT = 200             
+ENERGY_CUTOFF = 3.0
 # =============================================================================
 
 def get_focal_length_pixels(image_path):
@@ -97,18 +98,37 @@ class PaperCorrectApp:
         
         valid_lines = [l for l in raw_lines if len(l) > CURVE_MIN_LENGTH]
         valid_lines.sort(key=len, reverse=True)
-        self.selected_lines = valid_lines[:CURVE_MAX_COUNT]
+        raw_selected = valid_lines[:CURVE_MAX_COUNT]
         
-        if not self.selected_lines:
+        if not raw_selected:
             print("No valid lines found. Try a different region.")
             return
-            
-        print(f"Detected {len(self.selected_lines)} curves.")
-        
+
+        # Initialize baseline variables required for energy evaluation
+        flat_cloud = generate_flat_rho_cloud(GD_CONTROL_POINTS, torch.pi/3)
+        self.baseline_coords = flat_cloud[:, :2].detach()
+        self.baseline_values = flat_cloud[:, 2].detach().clone().requires_grad_(True)
+        self.T_array = np.linspace(0, 1, TIME_DOMAIN_STEPS)
+
+        self.selected_lines = []
         self.curves_gd = []
-        for line in self.selected_lines:
+        
+        for line in raw_selected:
             centered_line = [(pt[1] + x_min - w / 2.0, pt[0] + y_min - h / 2.0) for pt in line]
-            self.curves_gd.append(detector.Curve(centered_line, deg=2, bin_size=0.13))
+            cur_curve = detector.Curve(centered_line, deg=2, bin_size=0.13)
+            
+            with torch.no_grad():
+                e = total_energy(self.T_array, [cur_curve], self.baseline_coords, self.baseline_values, self.f_pixels).item()
+                
+            if e < ENERGY_CUTOFF:
+                self.selected_lines.append(line)
+                self.curves_gd.append(cur_curve)
+
+        print(f"Detected {len(self.selected_lines)} curves passing energy cutoff.")
+        
+        if not self.selected_lines:
+            print("No lines passed the energy cutoff.")
+            return
 
         self.interactive_line_selection()
 
@@ -117,15 +137,8 @@ class PaperCorrectApp:
         self.ax_lines = self.fig_lines.add_subplot(111)
         self.ax_lines.imshow(self.cropped_rgb)
         
-        # Pull the exact starting cloud used by the optimizer to guarantee energy parity
-        flat_cloud = generate_flat_rho_cloud(GD_CONTROL_POINTS, torch.pi/3)
-        self.baseline_coords = flat_cloud[:, :2].detach()
-        self.baseline_values = flat_cloud[:, 2].detach().clone().requires_grad_(True)
-        
-        self.T_array = np.linspace(0, 1, TIME_DOMAIN_STEPS)
-        
-        # Default all lines to False (opt-in selection)
-        self.line_active = [False] * len(self.curves_gd)
+        # Default all lines to True (opt-out selection)
+        self.line_active = [True] * len(self.curves_gd)
         self.line_picker_map = {}
         
         x_min, y_min, _, _, w, h = self.crop_params
@@ -135,8 +148,8 @@ class PaperCorrectApp:
             plot_x = cx + w/2.0 - x_min
             plot_y = cy + h/2.0 - y_min
             
-            # Start lines as faded red
-            ln, = self.ax_lines.plot(plot_x, plot_y, '-', color='red', alpha=0.4, linewidth=2.5, picker=True, pickradius=5)
+            # Start lines as solid cyan
+            ln, = self.ax_lines.plot(plot_x, plot_y, '-', color='cyan', alpha=1.0, linewidth=2.5, picker=True, pickradius=5)
             self.line_picker_map[ln] = i
             
         self.update_live_energy()
@@ -153,7 +166,7 @@ class PaperCorrectApp:
                 e = total_energy(self.T_array, active_curves, self.baseline_coords, self.baseline_values, self.f_pixels).item()
             energy_str = f"{e:.4f}"
             
-        self.ax_lines.set_title(f"STAGE 2: Click lines to select (Cyan=Active). Press Enter to optimize.\nInitial Baseline Energy of Active Lines: {energy_str}", fontweight='bold')
+        self.ax_lines.set_title(f"STAGE 2: Click lines to deselect (Red=Inactive). Press Enter to optimize.\nInitial Baseline Energy of Active Lines: {energy_str}", fontweight='bold')
         self.fig_lines.canvas.draw_idle()
 
     def on_line_pick(self, event):
@@ -183,7 +196,7 @@ class PaperCorrectApp:
         T = np.linspace(0, 1, TIME_DOMAIN_STEPS)
         t_start = time.time()
         
-        opt_cloud = run_gradient_descent(
+        opt_cloud, final_energy_val = run_multi_start_optimization(
             T, active_curves_gd, f=self.f_pixels, 
             num_points=GD_CONTROL_POINTS, 
             learning_rate=GD_LEARNING_RATE, 
@@ -230,10 +243,10 @@ class PaperCorrectApp:
         ax_3d = fig.add_subplot(122, projection='3d')
         
         norm_rgb = self.cropped_rgb.astype(float) / 255.0
-        tex = cv.resize(norm_rgb, (MESH_DENSITY, MESH_DENSITY))[::-1, :, :] 
+        tex = cv.resize(norm_rgb, (MESH_DENSITY, MESH_DENSITY)) 
         
-        self.surf_tex = ax_3d.plot_surface(P_X, P_Y, P_Z, facecolors=tex, shade=False, alpha=0.9, edgecolor='none')
-        self.surf_solid = ax_3d.plot_surface(P_X, P_Y, P_Z, color='gainsboro', shade=True, alpha=0.9, edgecolor='none')
+        self.surf_tex = ax_3d.plot_surface(P_X, P_Y, P_Z, facecolors=tex, shade=False, alpha=0.9, edgecolor='none', rcount=MESH_DENSITY, ccount=MESH_DENSITY)
+        self.surf_solid = ax_3d.plot_surface(P_X, P_Y, P_Z, color='gainsboro', shade=True, alpha=0.9, edgecolor='none', rcount=MESH_DENSITY, ccount=MESH_DENSITY)
         self.surf_solid.set_visible(False)
         
         ax_3d.set_title(f"3D Reconstructed Paper Surface\nTotal Final Energy: {final_energy:.4f}")

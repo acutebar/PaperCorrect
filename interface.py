@@ -124,7 +124,7 @@ class KinematicsGUI:
                 w_dt = -(u**(-1.5)) * A
                 w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
                 
-                total_e += detector.compute_projective_bending_energy(
+                total_e, _ += detector.compute_projective_bending_energy(
                     self.T, x_c, y_c, vx_val, vy_val, ax_val, ay_val, w, w_dt, w_ddt, self.f
                 )
             
@@ -182,7 +182,7 @@ class KinematicsGUI:
         w_dt = -(u**(-1.5)) * A
         w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
         
-        self.current_energy = detector.compute_projective_bending_energy(self.T, x_c, y_c, vx, vy, ax, ay, w, w_dt, w_ddt, self.f)
+        self.current_energy, _ = detector.compute_projective_bending_energy(self.T, x_c, y_c, vx, vy, ax, ay, w, w_dt, w_ddt, self.f)
         self.ax_img.set_title(f"Energy: {self.current_energy:.2f} | Hover to view kinematics")
         
         if self.last_mouse_event:

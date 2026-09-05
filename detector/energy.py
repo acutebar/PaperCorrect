@@ -44,19 +44,23 @@ def compute_projective_bending_energy(t, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f
     eps = 1e-12
     if torch.is_tensor(S):
         integrand = K_norm_sq / torch.clamp(S + eps, min=eps)**2.5 
+        arc_integrand = torch.sqrt(torch.clamp(S + eps, min=eps))
         if trim > 0:
             energy = torch.trapezoid(integrand[trim:-trim], t[trim:-trim])
+            arclen = torch.trapezoid(arc_integrand[trim:-trim], t[trim:-trim])
         else:
             energy = torch.trapezoid(integrand, t)
-        return energy
+            arclen = torch.trapezoid(arc_integrand, t)
+        return (energy, arclen)
     else:
         integrand = K_norm_sq / (np.maximum(S + eps, eps)**2.5)
+        arc_integrand = torch.sqrt(np.maximum(S + eps, eps))
         trapz_fn = getattr(np, 'trapezoid', getattr(np, 'trapz', None))
         if trim > 0:
             energy = trapz_fn(integrand[trim:-trim], t[trim:-trim])
         else:
             energy = trapz_fn(integrand, t)
-        return float(np.asarray(energy).item() if np.ndim(energy) > 0 else energy)
+        return (float(np.asarray(energy).item() if np.ndim(energy) > 0 else energy), float(np.asarray(arclen).item() if np.ndim(arclen) > 0 else arclen))
 
 def bump_2d(u, v, du, dv, u0, v0, ju, jv, deg=2):
     """
@@ -209,6 +213,7 @@ def total_energy(T, curves, cloud_coords, cloud_values, f = 50.0):
     #cloud_coords = deformation_cloud[:, :2]
     #cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
     deformation_cloud = torch.column_stack([cloud_coords, cloud_values])
+    arclens = []
 
     for curve in curves:
         x,y = curve.point_at(t)
@@ -250,11 +255,14 @@ def total_energy(T, curves, cloud_coords, cloud_values, f = 50.0):
         w = rho * lam
         w_dt = rho_t * lam + rho * lam_t
         w_ddt = rho_tt * lam + 2 * rho_t * lam_t + rho * lam_tt
+        term1 = (w_dt**2) * (x**2 + y**2 + f**2)
+        term2 = 2 * w * w_dt * (x * vx + y * vy)
+        term3 = (w**2) * (vx**2 + vy**2)
+    
         
         # 5. Compute structural bending energy
-        energy = compute_projective_bending_energy(t, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f)
-
-        total_E = total_E + energy
+        energy, arclen = compute_projective_bending_energy(t, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f)
+        arclens.append(arclen)
 
         # 6. Developability Regularization (True Euclidean Gaussian Curvature)
         # Map rho(u,v) into 3D Cartesian space: r = rho * n
@@ -267,8 +275,6 @@ def total_energy(T, curves, cloud_coords, cloud_values, f = 50.0):
         
         # Unit sphere normal vector n and its analytic stereographic derivatives
         n = torch.stack([2.0*u/D, 2.0*v/D, (1.0-u**2-v**2)/D], dim=1)
-        D = 1.0 + u**2 + v**2
-        D2, D3 = D**2, D**3
         
         # Unit sphere normal vector n and its analytic stereographic derivatives
         n = torch.stack([2.0*u/D, 2.0*v/D, (1.0-u**2-v**2)/D], dim=1)
@@ -345,8 +351,127 @@ def total_energy(T, curves, cloud_coords, cloud_values, f = 50.0):
         # Integrate H^2 over the curve to penalize extrinsic curling/folding
         lambda_h = 0  # Tune this: higher means stiffer, flatter paper
         h_penalty = torch.trapezoid(H**2, t)
+
+        # Depth Regularization (The "Spring" Tether)
+        # Assuming nominal depth is ~1.0. Penalize depth strictly greater than 2.0 (or drifting too close)
+        # Using a softplus or quadratic penalty for smooth gradients
+        nominal_rho = 1.0
+        rho_deviation = torch.relu(rho - 1.5)**2 + torch.relu(0.5 - rho)**2 
+
+        lambda_depth = 100.0  # High weight to act as a hard physical wall
+        depth_penalty = torch.trapezoid(rho_deviation, t)
         
+
         # Accumulate total energy
-        total_E = total_E + energy + (lambda_h * h_penalty) + (lambda_k * k_penalty) 
+        total_E = total_E + energy + (lambda_h * h_penalty) + (lambda_k * k_penalty) + lambda_depth*depth_penalty
+
+    # Length variance constraint
+    if len(arclens) > 1:
+        arclens_tensor = torch.stack(arclens)
+        var = torch.var(arclens_tensor)
+    else:
+        # Variance of a single curve is zero
+        var = torch.tensor(0.0, dtype=torch.float64, device=total_E.device)
+    lambda_var = 500.0
+    print("Length variance ", lambda_var*var)
+
+    total_E = total_E + lambda_var * var
 
     return total_E
+
+def evaluate_complexity(T, active_curves, coords, values, f_pixels):
+    """
+    Evaluates the Mean Curvature (H^2) integral over the curves as a measure of surface complexity.
+    """
+    total_H_penalty = 0.0
+    
+    # 1. Fit the surface to current coordinates and values
+    for curve in active_curves:
+        fit_x, fit_y = curve.point_at(T)
+        
+        # Map 2D pixel coordinates to stereographic (u, v)
+        R = np.sqrt(fit_x**2 + fit_y**2 + f_pixels**2)
+        u_np = fit_x / (f_pixels + R)
+        v_np = fit_y / (f_pixels + R)
+        
+        u = torch.as_tensor(u_np, dtype=torch.float64)
+        v = torch.as_tensor(v_np, dtype=torch.float64)
+        
+        # Query surface depth and derivatives
+        cloud = torch.cat([coords, values.unsqueeze(1)], dim=1)
+        rho, rho_u, rho_v, rho_uu, rho_vv, rho_uv = surface_fit(u, v, cloud, bin_size=0.5)
+        
+        # Spherical Normal Mapping
+        D = 1.0 + u**2 + v**2
+        D2, D3 = D**2, D**3
+        
+        n = torch.stack([2.0*u/D, 2.0*v/D, (1.0-u**2-v**2)/D], dim=1)
+        
+        n_u = torch.stack([
+            2.0*(1.0-u**2+v**2)/D2, 
+            -4.0*u*v/D2, 
+            -4.0*u/D2
+        ], dim=1)
+        
+        n_v = torch.stack([
+            -4.0*u*v/D2, 
+            2.0*(1.0+u**2-v**2)/D2, 
+            -4.0*v/D2
+        ], dim=1)
+        
+        n_uu = torch.stack([
+            -4.0*u*(3.0-u**2+3.0*v**2)/D3,
+            -4.0*v*(1.0-3.0*u**2+v**2)/D3,
+            -4.0*(1.0-3.0*u**2+v**2)/D3
+        ], dim=1)
+        
+        n_vv = torch.stack([
+            -4.0*u*(1.0+u**2-3.0*v**2)/D3,
+            -4.0*v*(3.0+3.0*u**2-v**2)/D3,
+            -4.0*(1.0+u**2-3.0*v**2)/D3
+        ], dim=1)
+        
+        n_uv = torch.stack([
+            4.0*v*(-1.0+3.0*u**2-v**2)/D3,
+            4.0*u*(-1.0-u**2+3.0*v**2)/D3,
+            16.0*u*v/D3
+        ], dim=1)
+        
+        # 3D Tangent and Curvature Vectors
+        rho_ = rho.unsqueeze(1)
+        rho_u_ = rho_u.unsqueeze(1)
+        rho_v_ = rho_v.unsqueeze(1)
+        rho_uu_ = rho_uu.unsqueeze(1)
+        rho_vv_ = rho_vv.unsqueeze(1)
+        rho_uv_ = rho_uv.unsqueeze(1)
+        
+        r_u = rho_u_ * n + rho_ * n_u
+        r_v = rho_v_ * n + rho_ * n_v
+        r_uu = rho_uu_ * n + 2.0 * rho_u_ * n_u + rho_ * n_uu
+        r_vv = rho_vv_ * n + 2.0 * rho_v_ * n_v + rho_ * n_vv
+        r_uv = rho_uv_ * n + rho_u_ * n_v + rho_v_ * n_u + rho_ * n_uv
+        
+        # First Fundamental Form
+        E = (r_u * r_u).sum(dim=1)
+        F = (r_u * r_v).sum(dim=1)
+        G = (r_v * r_v).sum(dim=1)
+        
+        # Surface Normal
+        N_cross = torch.linalg.cross(r_u, r_v, dim=1)
+        N_norm = torch.linalg.norm(N_cross, dim=1, keepdim=True)
+        N_vec = N_cross / (N_norm + 1e-12)
+        
+        # Second Fundamental Form
+        L = (r_uu * N_vec).sum(dim=1)
+        M = (r_uv * N_vec).sum(dim=1)
+        N_sf = (r_vv * N_vec).sum(dim=1)
+        
+        # Mean Curvature H
+        H = (E * N_sf - 2.0 * F * M + G * L) / (2.0 * (E * G - F**2) + 1e-12)
+        
+        # Integrate H^2 over the curve
+        t_tensor = torch.as_tensor(T, dtype=torch.float64)
+        h_penalty = torch.trapezoid(H**2, t_tensor)
+        total_H_penalty += h_penalty.item()
+        
+    return total_H_penalty

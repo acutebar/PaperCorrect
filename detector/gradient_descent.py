@@ -5,7 +5,8 @@ from .energy import (
     surface_fit,
     projective_kinematics,
     compute_projective_bending_energy,
-    total_energy
+    total_energy,
+    evaluate_complexity
 )
 import torch
 
@@ -54,8 +55,8 @@ def generate_flat_rho_cloud(num_points, max_angle=torch.pi/3):
     
     return torch.column_stack([u, v, flat_rho])
 
-def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.01, steps=500, eps=1e-5):
-    deformation_cloud = generate_flat_rho_cloud(num_points, torch.pi/3)
+def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.01, steps=500, eps=1e-5, initial_cloud=None):
+    deformation_cloud = initial_cloud
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
     
@@ -77,3 +78,93 @@ def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.01, 
         optimizer.step()
 
     return torch.column_stack([cloud_coords, cloud_values])
+
+def generate_spherical_rho_cloud(num_points, span):
+    grid_1d = torch.linspace(-span, span, int(np.sqrt(num_points)))
+    U, V = torch.meshgrid(grid_1d, grid_1d, indexing='ij')
+    rho_sphere = torch.ones_like(U)
+    return torch.stack([U.flatten(), V.flatten(), rho_sphere.flatten()], dim=1)
+
+def generate_hyperbolic_rho_cloud(num_points, span):
+    grid_1d = torch.linspace(-span, span, int(np.sqrt(num_points)))
+    U, V = torch.meshgrid(grid_1d, grid_1d, indexing='ij')
+    rho_saddle = 1.0 + (U**2 - V**2)
+    return torch.stack([U.flatten(), V.flatten(), rho_saddle.flatten()], dim=1)
+
+def generate_random_rho_cloud(num_points, span, base_cloud):
+    noise = torch.randn(num_points) * 0.1
+    rand_cloud = base_cloud.clone()
+    rand_cloud[:, 2] += noise
+    return rand_cloud
+
+def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps):
+    span = torch.pi / 3
+    flat_cloud = generate_flat_rho_cloud(num_points, span)
+    
+    topologies = [
+        ("Flat", flat_cloud)
+    ]
+    
+    results = []
+    
+    for name, init_cloud in topologies:
+        print(f"  -> Testing {name} topology...")
+        
+        opt_cloud = run_gradient_descent(
+            T, active_curves, f=f, 
+            num_points=num_points, 
+            learning_rate=learning_rate, 
+            steps=steps, 
+            eps=eps,
+            initial_cloud=init_cloud
+        )
+        
+        with torch.no_grad():
+            coords = opt_cloud[:, :2]
+            values = opt_cloud[:, 2]
+            
+            energy = total_energy(T, active_curves, coords, values, f).item()
+            complexity = evaluate_complexity(T, active_curves, coords, values, f)
+            
+        results.append({
+            'name': name,
+            'cloud': opt_cloud,
+            'energy': energy,
+            'complexity': complexity
+        })
+        print(f"     Energy: {energy:.4f} | Complexity: {complexity:.4f}")
+
+    # Hardcoded weights (adjust these based on the relative magnitudes of your E and H^2)
+    W_ENERGY = 1.0
+    W_COMPLEXITY = 0.1 
+    
+    best_score = float('inf')
+    winner = None
+    
+    for res in results:
+        score = (W_ENERGY * res['energy']) + (W_COMPLEXITY * res['complexity'])
+        res['score'] = score
+        
+        if score < best_score:
+            best_score = score
+            winner = res
+            
+    print(f"\nWinner: {winner['name']} (Score: {best_score:.4f} | E: {winner['energy']:.4f} | H^2: {winner['complexity']:.4f})")
+        
+    return winner['cloud'], winner['energy']
+
+    #min_energy_idx = min(range(len(results)), key=lambda i: results[i]['energy'])
+    #min_energy = results[min_energy_idx]['energy']
+    #
+    #tolerance_threshold = min_energy * 1.20 + 0.1
+    #
+    #comparable_candidates = [res for res in results if res['energy'] <= tolerance_threshold]
+    #
+    #if len(comparable_candidates) == 1:
+    #    winner = comparable_candidates[0]
+    #    print(f"\nWinner: {winner['name']} (Selected via Dominant Energy)")
+    #else:
+    #    winner = min(comparable_candidates, key=lambda x: x['complexity'])
+    #    print(f"\nWinner: {winner['name']} (Selected via Minimal Complexity)")
+    #    
+    #return winner['cloud'], winner['energy']

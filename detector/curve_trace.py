@@ -82,6 +82,8 @@ class LineDetector:
         line = [start]
         cv.circle(visited_mask, (int(start[1]), int(start[0])), self.width + 1, 1, -1)
         curr = start
+        prev_angle = None
+        base_angle = None
         
         while True:
             paths = self.get_valid_paths(padded_img, curr, visited_mask, thresh_map)
@@ -90,7 +92,22 @@ class LineDetector:
                 
             best_path = min(paths, key=lambda x: x[0])
             next_move = (best_path[2], best_path[3])
-            
+
+            cur_angle = best_path[1]
+
+            if prev_angle is not None:
+                diff = abs((cur_angle - prev_angle + 180) % 360 - 180)
+                total_diff = abs((cur_angle - base_angle + 180) % 360 - 180)
+                if diff > 45:
+                    break
+                elif total_diff > 60:
+                    break
+            else:
+                prev_angle = cur_angle
+                base_angle = cur_angle
+
+            prev_angle = cur_angle
+
             line.append(next_move)
             self.mark_visited(visited_mask, curr, next_move)
             curr = next_move
