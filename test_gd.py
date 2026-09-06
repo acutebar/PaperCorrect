@@ -11,7 +11,7 @@ from scipy.interpolate import RegularGridInterpolator
 from PIL import Image, ExifTags
 
 import detector
-from detector.gradient_descent import run_gradient_descent, generate_flat_rho_cloud, run_multi_start_optimization
+from detector.gradient_descent import run_gradient_descent, generate_flat_cloud, run_multi_start_optimization
 from detector.energy import surface_fit, total_energy
 
 # =============================================================================
@@ -20,7 +20,7 @@ from detector.energy import surface_fit, total_energy
 GD_STEPS = 100                   
 GD_NORM_CUTOFF = 1e-5            
 GD_LEARNING_RATE = 0.05          
-GD_CONTROL_POINTS = 64           
+GD_CONTROL_GRID_MULT = 7         # Creates an 8x8 control point grid over the cropped area
 
 TIME_DOMAIN_STEPS = 50           
 MESH_DENSITY = 60                
@@ -28,6 +28,9 @@ MESH_DENSITY = 60
 CURVE_MIN_LENGTH = 5            
 CURVE_MAX_COUNT = 200             
 ENERGY_CUTOFF = 3.0
+
+CURVE_BIN_SIZE = 0.13            # Bin size for B-spline curve fitting in normalized space
+SURFACE_BIN_SIZE = 0.15          # Bin size for 3D surface mesh rendering
 # =============================================================================
 
 def get_focal_length_pixels(image_path):
@@ -89,6 +92,12 @@ class PaperCorrectApp:
         self.cropped_rgb = self.img_rgb[y_min:y_max, x_min:x_max]
         self.crop_params = (x_min, y_min, x_max, y_max, w, h)
         
+        # Exact Normalized Bounds for the Cropped Region specifically
+        self.x_min_norm = (x_min - w / 2.0) / self.f_pixels
+        self.x_max_norm = (x_max - w / 2.0) / self.f_pixels
+        self.y_min_norm = (y_min - h / 2.0) / self.f_pixels
+        self.y_max_norm = (y_max - h / 2.0) / self.f_pixels
+        
         print("Detecting lines...")
         blurred = cv.GaussianBlur(self.cropped_img, (5, 5), 0)
         cleaned = cv.adaptiveThreshold(blurred, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 15)
@@ -104,8 +113,13 @@ class PaperCorrectApp:
             print("No valid lines found. Try a different region.")
             return
 
-        # Initialize baseline variables required for energy evaluation
-        flat_cloud = generate_flat_rho_cloud(GD_CONTROL_POINTS, torch.pi/3)
+        # Initialize flat depth cloud tightly bound to the cropped domain
+        flat_cloud = generate_flat_cloud(
+            self.x_min_norm, self.x_max_norm, 
+            self.y_min_norm, self.y_max_norm, 
+            mult=GD_CONTROL_GRID_MULT, 
+            depth=1.0
+        )
         self.baseline_coords = flat_cloud[:, :2].detach()
         self.baseline_values = flat_cloud[:, 2].detach().clone().requires_grad_(True)
         self.T_array = np.linspace(0, 1, TIME_DOMAIN_STEPS)
@@ -114,11 +128,16 @@ class PaperCorrectApp:
         self.curves_gd = []
         
         for line in raw_selected:
-            centered_line = [(pt[1] + x_min - w / 2.0, pt[0] + y_min - h / 2.0) for pt in line]
-            cur_curve = detector.Curve(centered_line, deg=2, bin_size=0.13)
+            # Shift center to absolute 0,0 optical center and shrink
+            centered_line_norm = [
+                ((pt[1] + x_min - w / 2.0) / self.f_pixels, 
+                 (pt[0] + y_min - h / 2.0) / self.f_pixels) 
+                for pt in line
+            ]
+            cur_curve = detector.Curve(centered_line_norm, deg=2, bin_size=CURVE_BIN_SIZE)
             
             with torch.no_grad():
-                e = total_energy(self.T_array, [cur_curve], self.baseline_coords, self.baseline_values, self.f_pixels).item()
+                e = total_energy(self.T_array, [cur_curve], self.baseline_coords, self.baseline_values, f=1.0).item()
                 
             if e < ENERGY_CUTOFF:
                 self.selected_lines.append(line)
@@ -137,18 +156,17 @@ class PaperCorrectApp:
         self.ax_lines = self.fig_lines.add_subplot(111)
         self.ax_lines.imshow(self.cropped_rgb)
         
-        # Default all lines to True (opt-out selection)
         self.line_active = [True] * len(self.curves_gd)
         self.line_picker_map = {}
         
         x_min, y_min, _, _, w, h = self.crop_params
         
         for i, curve in enumerate(self.curves_gd):
-            cx, cy = curve.point_at(self.T_array)
-            plot_x = cx + w/2.0 - x_min
-            plot_y = cy + h/2.0 - y_min
+            cx_norm, cy_norm = curve.point_at(self.T_array)
+            # Re-scale back to pixel magnitude relative to crop for UI overlay
+            plot_x = (cx_norm * self.f_pixels) + w/2.0 - x_min
+            plot_y = (cy_norm * self.f_pixels) + h/2.0 - y_min
             
-            # Start lines as solid cyan
             ln, = self.ax_lines.plot(plot_x, plot_y, '-', color='cyan', alpha=1.0, linewidth=2.5, picker=True, pickradius=5)
             self.line_picker_map[ln] = i
             
@@ -163,7 +181,7 @@ class PaperCorrectApp:
             energy_str = "0.0000"
         else:
             with torch.no_grad():
-                e = total_energy(self.T_array, active_curves, self.baseline_coords, self.baseline_values, self.f_pixels).item()
+                e = total_energy(self.T_array, active_curves, self.baseline_coords, self.baseline_values, f=1.0).item()
             energy_str = f"{e:.4f}"
             
         self.ax_lines.set_title(f"STAGE 2: Click lines to deselect (Red=Inactive). Press Enter to optimize.\nInitial Baseline Energy of Active Lines: {energy_str}", fontweight='bold')
@@ -192,41 +210,43 @@ class PaperCorrectApp:
             print("All lines deselected. Exiting.")
             return
 
-        print(f"\nStarting Gradient Descent on {len(active_curves_gd)} lines...")
+        print(f"\nStarting Adam Optimization on {len(active_curves_gd)} lines...")
         T = np.linspace(0, 1, TIME_DOMAIN_STEPS)
         t_start = time.time()
         
         opt_cloud, final_energy_val = run_multi_start_optimization(
-            T, active_curves_gd, f=self.f_pixels, 
-            num_points=GD_CONTROL_POINTS, 
+            T, active_curves_gd, f=1.0, 
+            num_points=len(T), 
             learning_rate=GD_LEARNING_RATE, 
             steps=GD_STEPS, 
-            eps=GD_NORM_CUTOFF
+            eps=GD_NORM_CUTOFF,
+            x_start=self.x_min_norm, x_end=self.x_max_norm,
+            y_start=self.y_min_norm, y_end=self.y_max_norm,
+            mult=GD_CONTROL_GRID_MULT
         )
         print(f"GD finished in {time.time() - t_start:.2f}s.")
         
         with torch.no_grad():
-            final_energy = total_energy(T, active_curves_gd, opt_cloud[:, :2], opt_cloud[:, 2], self.f_pixels).item()
+            final_energy = total_energy(T, active_curves_gd, opt_cloud[:, :2], opt_cloud[:, 2], f=1.0).item()
         
-        cloud_pts = opt_cloud[:, :2].detach().numpy()
-        cloud_vals = opt_cloud[:, 2].detach().numpy()
+        # Build 3D Mesh tightly across the cropped region
+        X_grid_norm = np.linspace(self.x_min_norm, self.x_max_norm, MESH_DENSITY)
+        Y_grid_norm = np.linspace(self.y_min_norm, self.y_max_norm, MESH_DENSITY)
+        X_norm, Y_norm = np.meshgrid(X_grid_norm, Y_grid_norm)
         
-        x_min, y_min, x_max, y_max, w, h = self.crop_params
-        X_grid = np.linspace(x_min - w/2.0, x_max - w/2.0, MESH_DENSITY)
-        Y_grid = np.linspace(y_min - h/2.0, y_max - h/2.0, MESH_DENSITY)
-        X, Y = np.meshgrid(X_grid, Y_grid)
+        u_mesh_flat = torch.tensor(X_norm.flatten(), dtype=torch.float64)
+        v_mesh_flat = torch.tensor(Y_norm.flatten(), dtype=torch.float64)
         
-        R = np.sqrt(X**2 + Y**2 + self.f_pixels**2)
-        u_mesh, v_mesh = X / (self.f_pixels + R), Y / (self.f_pixels + R)
+        # Fit depth parameter w over normalized coordinates (using scaled SURFACE_BIN_SIZE)
+        w_mesh_tensor = surface_fit(u_mesh_flat, v_mesh_flat, opt_cloud, bin_size=SURFACE_BIN_SIZE)[0]
+        w_mesh = w_mesh_tensor.detach().numpy().reshape(X_norm.shape)
         
-        rho_mesh_tensor = surface_fit(u_mesh, v_mesh, opt_cloud, bin_size=0.5)[0]
-        rho_mesh = rho_mesh_tensor.detach().numpy().reshape(X.shape)
+        # Map physical 3D coordinates, scaled back to pixel magnitude
+        P_X = w_mesh * (X_norm * self.f_pixels)
+        P_Y = w_mesh * (Y_norm * self.f_pixels)
+        P_Z = w_mesh * self.f_pixels
         
-        P_X = rho_mesh * (X / R)
-        P_Y = rho_mesh * (Y / R)
-        P_Z = rho_mesh * (self.f_pixels / R)
-        
-        interp = RegularGridInterpolator((Y_grid, X_grid), rho_mesh, bounds_error=False, fill_value=None)
+        interp = RegularGridInterpolator((Y_grid_norm, X_grid_norm), w_mesh, bounds_error=False, fill_value=None)
         
         self.show_dashboard(active_lines, active_curves_gd, T, P_X, P_Y, P_Z, interp, final_energy)
 
@@ -250,7 +270,7 @@ class PaperCorrectApp:
         self.surf_solid.set_visible(False)
         
         ax_3d.set_title(f"3D Reconstructed Paper Surface\nTotal Final Energy: {final_energy:.4f}")
-        ax_3d.set_xlabel("X"); ax_3d.set_ylabel("Y"); ax_3d.set_zlabel("Depth (Z)")
+        ax_3d.set_xlabel("X (Pixels)"); ax_3d.set_ylabel("Y (Pixels)"); ax_3d.set_zlabel("Depth (Z)")
         
         self.toggleable_lines = []
         
@@ -258,25 +278,24 @@ class PaperCorrectApp:
             pts = np.array(line_raw)
             ln1, = ax_2d.plot(pts[:, 1], pts[:, 0], 'r.', markersize=2)
             
-            fit_x, fit_y = curve_gd.point_at(T)
-            cx, cy = fit_x, fit_y
+            fit_x_norm, fit_y_norm = curve_gd.point_at(T)
+            cx_norm, cy_norm = fit_x_norm, fit_y_norm
             
-            plot_x = cx + w/2.0 - x_min
-            plot_y = cy + h/2.0 - y_min
+            plot_x = (cx_norm * self.f_pixels) + w/2.0 - x_min
+            plot_y = (cy_norm * self.f_pixels) + h/2.0 - y_min
             ln2, = ax_2d.plot(plot_x, plot_y, 'b-', linewidth=1, alpha=0.7)
             
             self.toggleable_lines.extend([ln1, ln2])
             
-            mask = (cx >= x_min - w/2) & (cx <= x_min + w/2) & (cy >= y_min - h/2) & (cy <= y_min + h/2)
-            cx, cy = cx[mask], cy[mask]
+            mask = (cx_norm >= self.x_min_norm) & (cx_norm <= self.x_max_norm) & (cy_norm >= self.y_min_norm) & (cy_norm <= self.y_max_norm)
+            cx_valid, cy_valid = cx_norm[mask], cy_norm[mask]
             
-            if len(cx) > 0:
-                rho_curve = interp((cy, cx))
-                R_curve = np.sqrt(cx**2 + cy**2 + self.f_pixels**2)
+            if len(cx_valid) > 0:
+                w_curve = interp((cy_valid, cx_valid))
                 
-                curve_3d_x = rho_curve * (cx / R_curve)
-                curve_3d_y = rho_curve * (cy / R_curve)
-                curve_3d_z = rho_curve * (self.f_pixels / R_curve)
+                curve_3d_x = w_curve * (cx_valid * self.f_pixels)
+                curve_3d_y = w_curve * (cy_valid * self.f_pixels)
+                curve_3d_z = w_curve * self.f_pixels
                 
                 ln3, = ax_3d.plot(curve_3d_x, curve_3d_y, curve_3d_z, color='cyan', linewidth=2.5, zorder=10)
                 self.toggleable_lines.append(ln3)

@@ -3,59 +3,55 @@ import math
 from scipy.optimize import minimize
 from .energy import (
     surface_fit,
-    projective_kinematics,
-    compute_projective_bending_energy,
     total_energy,
     evaluate_complexity
 )
 import torch
+from scipy.ndimage import gaussian_filter
 
-USE_CONE_SAMPLING = True
+def generate_random_smooth_cloud(x_start, x_end, y_start, y_end, mult=100, depth_mean=1.0, depth_var=0.3, sigma=4.0):
+    num_points = int(mult) + 1
+    
+    xs = np.linspace(float(x_start), float(x_end), num_points)
+    ys = np.linspace(float(y_start), float(y_end), num_points)
+    
+    # 1. Generate pure uncorrelated Gaussian noise
+    raw_noise = np.random.normal(loc=0.0, scale=depth_var, size=(num_points, num_points))
+    
+    # 2. Apply low-pass Gaussian filter to create a smooth surface
+    smoothed_noise = gaussian_filter(raw_noise, sigma=sigma)
+    
+    # Normalize the smoothed noise back to the desired variance scale, as filtering dampens amplitude
+    if np.std(smoothed_noise) > 1e-8:
+        smoothed_noise = (smoothed_noise / np.std(smoothed_noise)) * depth_var
+        
+    z_grid = depth_mean + smoothed_noise
+    
+    grid_x, grid_y = np.meshgrid(xs, ys, indexing='xy')
+    
+    u = torch.tensor(grid_x.reshape(-1), dtype=torch.float64)
+    v = torch.tensor(grid_y.reshape(-1), dtype=torch.float64)
+    w = torch.tensor(z_grid.reshape(-1), dtype=torch.float64)
+    
+    return torch.column_stack([u, v, w])
 
-def generate_uniform_rho_cloud(num_points=256, max_phi=None):
-    """
-    Uniformly samples a spherical cap on S^2_+ and maps to stereographic (u, v) with rho=1.
-    If max_phi is None, samples the full upper hemisphere [0, pi/2].
-    """
-    indices = torch.arange(0, num_points, dtype=torch.float64) + 0.5
+def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
+    # mult intervals mean (mult + 1) grid points per axis
+    num_points = int(mult) + 1
     
-    # ==========================================================================
-    # FIX 2: Sample Only the Image Cone (Logic)
-    # ==========================================================================
-    if USE_CONE_SAMPLING and max_phi is not None:
-        # Uniform area sampling on a spherical cap of half-angle max_phi:
-        # cos(phi) runs from 1 down to cos(max_phi)
-        cos_max = math.cos(max_phi)
-        phi = torch.arccos(1.0 - (indices / num_points) * (1.0 - cos_max))
-    else:
-        # Revert: Sample full half-sphere [0, pi/2]
-        phi = torch.arccos(1.0 - indices / num_points)
-    # ==========================================================================
+    xs = torch.linspace(float(x_start), float(x_end), steps=num_points, dtype=torch.float64)
+    ys = torch.linspace(float(y_start), float(y_end), steps=num_points, dtype=torch.float64)
     
-    theta = torch.pi * (1.0 + 5.0**0.5) * indices
+    # Generate 2D coordinate meshgrid
+    grid_x, grid_y = torch.meshgrid(xs, ys, indexing='xy')
     
-    x = torch.sin(phi) * torch.cos(theta)
-    y = torch.sin(phi) * torch.sin(theta)
-    z = torch.cos(phi)
+    u = grid_x.reshape(-1)
+    v = grid_y.reshape(-1)
+    w = torch.full_like(u, depth)
     
-    u = x / (1.0 + z)
-    v = y / (1.0 + z)
-    rho = torch.ones_like(u)
-    
-    return torch.column_stack([u, v, rho])
+    return torch.column_stack([u, v, w])
 
-def generate_flat_rho_cloud(num_points, max_angle=torch.pi/3):
-    # Call your existing function to preserve your exact (u, v) point distribution
-    cloud = generate_uniform_rho_cloud(num_points, max_angle)
-    u = cloud[:, 0]
-    v = cloud[:, 1]
-    
-    # Override rho to map to a flat plane at Z=1 instead of a unit sphere
-    flat_rho = (1.0 + u**2 + v**2) / (1.0 - u**2 - v**2)
-    
-    return torch.column_stack([u, v, flat_rho])
-
-def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.01, steps=500, eps=1e-5, initial_cloud=None):
+def run_gradient_descent(t, curves, f=1.0, num_points=256, learning_rate=0.01, steps=500, eps=1e-5, initial_cloud=None):
     deformation_cloud = initial_cloud
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
@@ -79,32 +75,13 @@ def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.01, 
 
     return torch.column_stack([cloud_coords, cloud_values])
 
-def generate_spherical_rho_cloud(num_points, span):
-    grid_1d = torch.linspace(-span, span, int(np.sqrt(num_points)))
-    U, V = torch.meshgrid(grid_1d, grid_1d, indexing='ij')
-    rho_sphere = torch.ones_like(U)
-    return torch.stack([U.flatten(), V.flatten(), rho_sphere.flatten()], dim=1)
-
-def generate_hyperbolic_rho_cloud(num_points, span):
-    grid_1d = torch.linspace(-span, span, int(np.sqrt(num_points)))
-    U, V = torch.meshgrid(grid_1d, grid_1d, indexing='ij')
-    rho_saddle = 1.0 + (U**2 - V**2)
-    return torch.stack([U.flatten(), V.flatten(), rho_saddle.flatten()], dim=1)
-
-def generate_random_rho_cloud(num_points, span, base_cloud):
-    noise = torch.randn(num_points) * 0.1
-    rand_cloud = base_cloud.clone()
-    rand_cloud[:, 2] += noise
-    return rand_cloud
-
-def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps):
+def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps, x_start, x_end, y_start, y_end, mult=100):
     span = torch.pi / 3
-    flat_cloud = generate_flat_rho_cloud(num_points, span)
+    flat_cloud = generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100)
     
     topologies = [
         ("Flat", flat_cloud)
     ]
-    
     results = []
     
     for name, init_cloud in topologies:
@@ -136,7 +113,7 @@ def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate,
 
     # Hardcoded weights (adjust these based on the relative magnitudes of your E and H^2)
     W_ENERGY = 1.0
-    W_COMPLEXITY = 0.1 
+    W_COMPLEXITY = 0.5 
     
     best_score = float('inf')
     winner = None
@@ -152,19 +129,3 @@ def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate,
     print(f"\nWinner: {winner['name']} (Score: {best_score:.4f} | E: {winner['energy']:.4f} | H^2: {winner['complexity']:.4f})")
         
     return winner['cloud'], winner['energy']
-
-    #min_energy_idx = min(range(len(results)), key=lambda i: results[i]['energy'])
-    #min_energy = results[min_energy_idx]['energy']
-    #
-    #tolerance_threshold = min_energy * 1.20 + 0.1
-    #
-    #comparable_candidates = [res for res in results if res['energy'] <= tolerance_threshold]
-    #
-    #if len(comparable_candidates) == 1:
-    #    winner = comparable_candidates[0]
-    #    print(f"\nWinner: {winner['name']} (Selected via Dominant Energy)")
-    #else:
-    #    winner = min(comparable_candidates, key=lambda x: x['complexity'])
-    #    print(f"\nWinner: {winner['name']} (Selected via Minimal Complexity)")
-    #    
-    #return winner['cloud'], winner['energy']

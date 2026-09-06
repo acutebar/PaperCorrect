@@ -1,82 +1,74 @@
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import detector
+from mpl_toolkits.mplot3d import Axes3D
 
-def stereographic_projection(x, y, z):
-    u = x / (1 + z)
-    v = y / (1 + z)
-    return u, v
+# Import from your detector module W
+from detector.energy import surface_fit
+from detector.gradient_descent import generate_random_smooth_cloud, generate_flat_cloud
 
-def run_test():
-    # 1. Generate a random cloud of points on the upper half sphere
-    N = 1000
-    rand_theta = np.random.uniform(0, 2*np.pi, N)
-    # Uniform sampling over the upper hemisphere
-    rand_phi = np.arccos(np.random.uniform(0, 1, N)) 
+def test_surface_fit():
+    print("Generating random smooth cloud...")
+    x_min, x_max = -0.5, 0.5
+    y_min, y_max = -0.5, 0.5
+    cloud = generate_random_smooth_cloud(x_min, x_max, y_min, y_max, mult=20, depth_mean=1.5, depth_var=0.5, sigma=2.0)
+    cloud = generate_flat_cloud(x_min, x_max, y_min, y_max, mult=20, depth=1.5)
     
-    cloud_x = np.sin(rand_phi) * np.cos(rand_theta)
-    cloud_y = np.sin(rand_phi) * np.sin(rand_theta)
-    cloud_z = np.cos(rand_phi)
+    print("Fitting surface...")
+    # Create evaluation grid
+    eval_pts = 50
+    x_val = torch.linspace(x_min, x_max, eval_pts, dtype=torch.float64)
+    y_val = torch.linspace(y_min, y_max, eval_pts, dtype=torch.float64)
+    X, Y = torch.meshgrid(x_val, y_val, indexing='xy')
     
-    # Generate purely random noise for rho
-    raw_rho = np.random.uniform(0.5, 1.5, N)
+    u_flat = X.reshape(-1)
+    v_flat = Y.reshape(-1)
     
-    # 2. Apply a low-pass Gaussian filter directly to the point cloud (Kernel Smoothing)
-    points = np.column_stack([cloud_x, cloud_y, cloud_z])
-    # Compute pairwise squared distances using NumPy broadcasting
-    dists_sq = np.sum((points[:, np.newaxis, :] - points[np.newaxis, :, :])**2, axis=-1)
+    # Fit the surface (w is the depth field)
+    w_flat, w_x, w_y, w_xx, w_yy, w_xy = surface_fit(u_flat, v_flat, cloud, deg=2, bin_size=0.2)
+    W = w_flat.reshape(eval_pts, eval_pts).detach().numpy()
     
-    sigma = 0.25  # Gaussian bandwidth (smoothness parameter)
-    weights = np.exp(-dists_sq / (2 * sigma**2))
-    weights /= weights.sum(axis=1, keepdims=True)
+    X_np = X.detach().numpy()
+    Y_np = Y.detach().numpy()
     
-    # The filtered cloud is a local weighted average of the random noise
-    smooth_rho = weights @ raw_rho
+    # Physical 3D mapping: P = w * (x, y, 1.0)
+    f = 1.0
+    P_X = W * X_np
+    P_Y = W * Y_np
+    P_Z = W * f
     
-    # 3. Project cloud to stereographic domain
-    cloud_u, cloud_v = stereographic_projection(cloud_x, cloud_y, cloud_z)
-    cloud_dataset = np.column_stack([cloud_u, cloud_v, smooth_rho])
+    # Plotting
+    fig = plt.figure(figsize=(14, 6))
     
-    # 4. Generate a regular evaluation grid for plotting the surface
-    theta = np.linspace(0, 2*np.pi, 200)
-    phi = np.linspace(0, np.pi/2, 100)
-    Theta, Phi = np.meshgrid(theta, phi)
+    # Plot 1: Raw depth function w(x, y)
+    ax1 = fig.add_subplot(121, projection='3d')
+    ax1.plot_surface(X_np, Y_np, W, cmap='viridis', edgecolor='none', alpha=0.8)
+    ax1.scatter(cloud[:, 0].numpy(), cloud[:, 1].numpy(), cloud[:, 2].numpy(), c='red', s=5, label='Control Points')
+    ax1.set_title('Raw Parameter Space: Depth $w(x, y)$')
+    ax1.set_xlabel('Image x')
+    ax1.set_ylabel('Image y')
+    ax1.set_zlabel('Depth w')
+    ax1.legend()
+
+    # Plot 2: Physical 3D Surface
+    ax2 = fig.add_subplot(122, projection='3d')
+    ax2.plot_surface(P_X, P_Y, P_Z, cmap='plasma', edgecolor='k', linewidth=0.2, alpha=0.9)
+    ax2.set_title('Physical 3D Surface: $\mathbf{P} = w(x, y) \cdot (x, y, f)$')
+    ax2.set_xlabel('3D X')
+    ax2.set_ylabel('3D Y')
+    ax2.set_zlabel('3D Z')
     
-    X = np.sin(Phi) * np.cos(Theta)
-    Y = np.sin(Phi) * np.sin(Theta)
-    Z = np.cos(Phi)
-    
-    U_grid, V_grid = stereographic_projection(X, Y, Z)
-    
-    # 5. Fit the surface using the energy functional script
-    fitted_Rho, _, _, _, _, _ = detector.surface_fit(U_grid, V_grid, cloud_dataset, deg=2, bin_size=0.4)
-    fitted_Rho = np.array(fitted_Rho)
-    
-    # Scale the evaluation grid coordinates by the fitted Rho
-    X_fit = fitted_Rho * X
-    Y_fit = fitted_Rho * Y
-    Z_fit = fitted_Rho * Z
-    
-    # 6. Plotting (Single Combined Plot)
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
-    
-    # Plot the fitted surface
-    ax.plot_surface(X_fit, Y_fit, Z_fit, cmap='plasma', alpha=0.7, edgecolor='none')
-    
-    # Overlay the smoothed point cloud
-    ax.scatter(smooth_rho * cloud_x, smooth_rho * cloud_y, smooth_rho * cloud_z, 
-               color='k', s=15, alpha=1.0, label="Smoothed Cloud")
-               
-    ax.set_title("B-Spline Fit $\\rho_{fit} \\cdot S^2_+$ from Smoothed Random Cloud")
-    
-    # Dynamic Z-axis scaling to fit the data
-    max_z = max(np.max(Z_fit), np.max(smooth_rho * cloud_z))
-    ax.set_zlim(0, max_z + 0.1)
-    ax.legend()
-    
+    # Ensure equal aspect ratio for realistic paper representation
+    max_range = np.array([P_X.max()-P_X.min(), P_Y.max()-P_Y.min(), P_Z.max()-P_Z.min()]).max() / 2.0
+    mid_x = (P_X.max()+P_X.min()) * 0.5
+    mid_y = (P_Y.max()+P_Y.min()) * 0.5
+    mid_z = (P_Z.max()+P_Z.min()) * 0.5
+    ax2.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax2.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax2.set_zlim(mid_z - max_range, mid_z + max_range)
+
     plt.tight_layout()
     plt.show()
 
-if __name__ == '__main__':
-    run_test()
+if __name__ == "__main__":
+    test_surface_fit()
