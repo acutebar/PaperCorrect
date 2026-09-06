@@ -8,6 +8,7 @@ from .energy import (
 )
 import torch
 from scipy.ndimage import gaussian_filter
+import matplotlib.pyplot as plt
 
 def generate_random_smooth_cloud(x_start, x_end, y_start, y_end, mult=100, depth_mean=1.0, depth_var=0.3, sigma=4.0):
     num_points = int(mult) + 1
@@ -39,23 +40,21 @@ def generate_random_smooth_cloud(x_start, x_end, y_start, y_end, mult=100, depth
     return torch.column_stack([u, v, rho])
 
 def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
-    # mult intervals mean (mult + 1) grid points per axis
     num_points = int(mult) + 1
     
     xs = torch.linspace(float(x_start), float(x_end), steps=num_points, dtype=torch.float64)
     ys = torch.linspace(float(y_start), float(y_end), steps=num_points, dtype=torch.float64)
     
-    # Generate 2D coordinate meshgrid
     grid_x, grid_y = torch.meshgrid(xs, ys, indexing='xy')
     
     u = grid_x.reshape(-1)
     v = grid_y.reshape(-1)
     
-    # \rho / R = depth (w) => \rho = depth * R
-    R = torch.sqrt(u**2 + v**2 + 1.0)
-    rho = depth * R
+    # Pure flat plane at constant projective depth
+    w = torch.full_like(u, depth)
     
-    return torch.column_stack([u, v, rho])
+    return torch.column_stack([u, v, w])
+
 def run_gradient_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-5, initial_cloud=None):
     deformation_cloud = initial_cloud
     cloud_coords = deformation_cloud[:, :2].detach()
@@ -63,25 +62,62 @@ def run_gradient_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, 
     
     optimizer = torch.optim.Adam([cloud_values], lr=learning_rate)
 
+    # -------------------------------------------------------------
+    # Live 3D Plot Setup
+    # -------------------------------------------------------------
+    plt.ion()
+    fig = plt.figure(figsize=(7, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Infer grid resolution along each axis
+    grid_dim = int(round(math.sqrt(cloud_coords.shape[0])))
+    x_flat = cloud_coords[:, 0].detach().cpu().numpy()
+    y_flat = cloud_coords[:, 1].detach().cpu().numpy()
+    
+    surf_plot = None
+
     for i in range(steps):
         optimizer.zero_grad()
         TE = total_energy(t, curves, cloud_coords, cloud_values, f)
         TE.backward()
         
         grad_norm = cloud_values.grad.norm().item()
-        if (i + 1) % max(1, steps // 10) == 0 or i == 0 or i == steps - 1:
-            print(f"  [GD Step {i+1:3d}/{steps}] Energy: {TE.item():.4f} | Grad Norm: {grad_norm:.6f}")
-        else:
-            print(f"  [GD Step {i+1:3d}/{steps}] Energy: {TE.item():.4f} | Grad Norm: {grad_norm:.6f}")
-            
+        print(f"  [GD Step {i+1:3d}/{steps}] Energy: {TE.item():.4f} | Grad Norm: {grad_norm:.6f}")
+
+        # ---------------------------------------------------------
+        # Plot check: first 5 steps (i < 5), every n/10th step, or last step
+        # ---------------------------------------------------------
+        interval = max(1, steps // 10)
+        if i < 5 or (i + 1) % interval == 0 or i == steps - 1:
+            with torch.no_grad():
+                w_flat = cloud_values.detach().cpu().numpy()
+                
+                # Physical 3D projection: (w * x, w * y, w * f)
+                px = (w_flat * x_flat).reshape(grid_dim, grid_dim)
+                py = (w_flat * y_flat).reshape(grid_dim, grid_dim)
+                pz = (w_flat * f).reshape(grid_dim, grid_dim)
+                
+                ax.clear()
+                ax.plot_surface(px, py, pz, cmap='viridis', edgecolor='none', alpha=0.9)
+                ax.set_title(f"Step {i+1}/{steps} | Energy: {TE.item():.4f}")
+                ax.set_xlabel("X")
+                ax.set_ylabel("Y")
+                ax.set_zlabel("Z")
+                
+                fig.canvas.draw()
+                fig.canvas.flush_events()
+                plt.pause(0.001)
+
         if grad_norm < eps:
             print(f"  [GD] Converged at step {i+1} with gradient norm {grad_norm:.6e}")
             break
             
         optimizer.step()
 
-    return torch.column_stack([cloud_coords, cloud_values])
+    plt.ioff()
+    plt.close(fig)
 
+    return torch.column_stack([cloud_coords, cloud_values])
 def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps, x_start, x_end, y_start, y_end, mult=100):
     span = torch.pi / 3
     flat_cloud = generate_flat_cloud(x_start, x_end, y_start, y_end, mult)
