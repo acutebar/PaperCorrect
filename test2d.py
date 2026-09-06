@@ -12,7 +12,7 @@ def test_surface_fit():
     x_min, x_max = -0.5, 0.5
     y_min, y_max = -0.5, 0.5
     cloud = generate_random_smooth_cloud(x_min, x_max, y_min, y_max, mult=20, depth_mean=1.5, depth_var=0.5, sigma=2.0)
-    cloud = generate_flat_cloud(x_min, x_max, y_min, y_max, mult=20, depth=1.5)
+    #cloud = generate_flat_cloud(x_min, x_max, y_min, y_max, mult=20, depth=1.5)
     
     print("Fitting surface...")
     # Create evaluation grid
@@ -33,9 +33,10 @@ def test_surface_fit():
     
     # Physical 3D mapping: P = w * (x, y, 1.0)
     f = 1.0
-    P_X = W * X_np
-    P_Y = W * Y_np
-    P_Z = W * f
+    R = np.sqrt(X_np**2 + Y_np**2 + f**2)
+    P_X = W/R * X_np
+    P_Y = W/R * Y_np
+    P_Z = W/R * f
     
     # Plotting
     fig = plt.figure(figsize=(14, 6))

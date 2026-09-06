@@ -21,19 +21,22 @@ def generate_random_smooth_cloud(x_start, x_end, y_start, y_end, mult=100, depth
     # 2. Apply low-pass Gaussian filter to create a smooth surface
     smoothed_noise = gaussian_filter(raw_noise, sigma=sigma)
     
-    # Normalize the smoothed noise back to the desired variance scale, as filtering dampens amplitude
+    # Normalize the smoothed noise back to the desired variance scale
     if np.std(smoothed_noise) > 1e-8:
         smoothed_noise = (smoothed_noise / np.std(smoothed_noise)) * depth_var
         
-    z_grid = depth_mean + smoothed_noise
-    
     grid_x, grid_y = np.meshgrid(xs, ys, indexing='xy')
+    
+    # \rho / R = w (where w is the depth field). To initialize flat paper at depth w:
+    # \rho = w * R
+    R_grid = np.sqrt(grid_x**2 + grid_y**2 + 1.0)
+    rho_grid = (depth_mean + smoothed_noise) * R_grid
     
     u = torch.tensor(grid_x.reshape(-1), dtype=torch.float64)
     v = torch.tensor(grid_y.reshape(-1), dtype=torch.float64)
-    w = torch.tensor(z_grid.reshape(-1), dtype=torch.float64)
+    rho = torch.tensor(rho_grid.reshape(-1), dtype=torch.float64)
     
-    return torch.column_stack([u, v, w])
+    return torch.column_stack([u, v, rho])
 
 def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
     # mult intervals mean (mult + 1) grid points per axis
@@ -47,11 +50,13 @@ def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
     
     u = grid_x.reshape(-1)
     v = grid_y.reshape(-1)
-    w = torch.full_like(u, depth)
     
-    return torch.column_stack([u, v, w])
-
-def run_gradient_descent(t, curves, f=1.0, num_points=256, learning_rate=0.01, steps=500, eps=1e-5, initial_cloud=None):
+    # \rho / R = depth (w) => \rho = depth * R
+    R = torch.sqrt(u**2 + v**2 + 1.0)
+    rho = depth * R
+    
+    return torch.column_stack([u, v, rho])
+def run_gradient_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-5, initial_cloud=None):
     deformation_cloud = initial_cloud
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
@@ -77,7 +82,7 @@ def run_gradient_descent(t, curves, f=1.0, num_points=256, learning_rate=0.01, s
 
 def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps, x_start, x_end, y_start, y_end, mult=100):
     span = torch.pi / 3
-    flat_cloud = generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100)
+    flat_cloud = generate_flat_cloud(x_start, x_end, y_start, y_end, mult)
     
     topologies = [
         ("Flat", flat_cloud)

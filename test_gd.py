@@ -19,10 +19,10 @@ from detector.energy import surface_fit, total_energy
 # =============================================================================
 GD_STEPS = 100                   
 GD_NORM_CUTOFF = 1e-5            
-GD_LEARNING_RATE = 0.05          
-GD_CONTROL_GRID_MULT = 7         # Creates an 8x8 control point grid over the cropped area
+GD_LEARNING_RATE = 0.0005          
+GD_CONTROL_GRID_MULT = 20         # Creates an 8x8 control point grid over the cropped area
 
-TIME_DOMAIN_STEPS = 50           
+TIME_DOMAIN_STEPS = 100           
 MESH_DENSITY = 60                
 
 CURVE_MIN_LENGTH = 5            

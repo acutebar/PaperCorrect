@@ -140,10 +140,10 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, arcmultiply
     deformation_cloud = torch.column_stack([cloud_coords, cloud_values])
     arclens = []
 
-    lambda_depth = 5.0
+    lambda_depth = 0.0
     lambda_h = 0.0
-    lambda_k = 2.0
-    lambda_var = 100.0
+    lambda_k = 0.0
+    lambda_var = 0.0
 
     for curve in curves:
         x, y = curve.point_at(t)
