@@ -124,9 +124,9 @@ def surface_fit(u, v, cloud, deg=2, bin_size=1):
 
 
 def total_energy(T, curves, cloud_coords, cloud_values, f=1.0):
-    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0)[0]
+    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f)[0]
 def evaluate_complexity(T, curves, cloud_coords, cloud_values, f=1.0):
-    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0)[2]
+    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f)[2]
 
 def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, arcmultiply=False):
     total_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
@@ -190,9 +190,13 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, arcmultiply
         speed_sq_clamped = torch.clamp(speed_sq, min=1e-12)
 
         integrand = (a_T**2) / (speed_sq_clamped**2.5)
-        trim = max(1, len(t) // 10) if len(t) > 10 else 0
+        trim = max(1, len(t) // 5) if len(t) > 10 else 0
+        #trim=0
         if trim > 0:
             energy = torch.trapezoid(integrand[trim:-trim], t[trim:-trim])
+            og_energy = torch.trapezoid(integrand, t)
+            #print("EDGE ENERGY: ", og_energy - energy)
+
             arclen = torch.trapezoid(torch.sqrt(speed_sq_clamped[trim:-trim]), t[trim:-trim])
         else:
             energy = torch.trapezoid(integrand, t)

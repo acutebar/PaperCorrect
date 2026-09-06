@@ -55,7 +55,11 @@ def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
     
     return torch.column_stack([u, v, w])
 
-def run_gradient_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.001, steps=500, eps=1e-5, initial_cloud=None):
+def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-4, initial_cloud=None):
+    return run_adam_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud)
+
+
+def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.001, steps=500, eps=1e-5, initial_cloud=None):
     deformation_cloud = initial_cloud 
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
@@ -75,12 +79,12 @@ def run_gradient_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.0
     surf_plot = None
 
     for i in range(steps):
-        optimizer.zero_grad()
+        #optimizer.zero_grad()
         TE = total_energy(t, curves, cloud_coords, cloud_values, f)
         TE.backward()
         
         grad_norm = cloud_values.grad.norm().item()
-        print(f"  [GD Step {i+1:3d}/{steps}] Energy: {TE.item():.4f} | Grad Norm: {grad_norm:.6f}")
+        print(f"VANILLVANILLAA  [GD Step {i+1:3d}/{steps}] Energy: {TE.item():.4f} | Grad Norm: {grad_norm:.6f}")
 
         # ---------------------------------------------------------
         # Plot check: first 5 steps (i < 5), every n/10th step, or last step
@@ -113,10 +117,12 @@ def run_gradient_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.0
         with torch.no_grad():
             cloud_values -= learning_rate * cloud_values.grad
             cloud_values.grad.zero_()
+    plt.ioff()
+    plt.close(fig)
 
     return torch.column_stack([cloud_coords, cloud_values])
 
-def run_gradient_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-5, initial_cloud=None):
+def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-5, initial_cloud=None):
     deformation_cloud = initial_cloud
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
@@ -179,6 +185,7 @@ def run_gradient_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, 
     plt.close(fig)
 
     return torch.column_stack([cloud_coords, cloud_values])
+
 def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps, x_start, x_end, y_start, y_end, mult=100):
     span = torch.pi / 3
     flat_cloud = generate_flat_cloud(x_start, x_end, y_start, y_end, mult)

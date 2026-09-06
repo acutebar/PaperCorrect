@@ -44,7 +44,7 @@ class KinematicsGUI:
         self.scale_by_mag = False
         
         # UI Element for Total Energy
-        self.total_energy_text = self.fig.text(0.78, 0.75, "", fontsize=12, fontweight='bold')
+        #self.total_energy_text = self.fig.text(0.78, 0.75, "", fontsize=12, fontweight='bold')
         
         # State variables
         self.crop_box = None
@@ -111,24 +111,24 @@ class KinematicsGUI:
                     self.line_artists.append(line_obj)
             
             # Compute and display total energy for all detected lines
-            total_e = 0.0
-            for line in self.lines:
-                (x_val, y_val), (vx_val, vy_val), (ax_val, ay_val) = detector.curve_fit(self.T, line, bin_size=0.13, deg=2)
-                x_c = x_val - self.true_center_x
-                y_c = y_val - self.true_center_y
-                u = x_c**2 + y_c**2 + self.f**2
-                A = x_c * vx_val + y_c * vy_val
-                B = vx_val**2 + vy_val**2 + x_c * ax_val + y_c * ay_val
-                
-                w = u**(-0.5)
-                w_dt = -(u**(-1.5)) * A
-                w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
-                
-                total_e, _ += detector.compute_projective_bending_energy(
-                    self.T, x_c, y_c, vx_val, vy_val, ax_val, ay_val, w, w_dt, w_ddt, self.f
-                )
-            
-            self.total_energy_text.set_text(f"Total Energy:\n{total_e:.2f}")
+            #total_e = 0.0
+            #for line in self.lines:
+            #    (x_val, y_val), (vx_val, vy_val), (ax_val, ay_val) = detector.curve_fit(self.T, line, bin_size=0.13, deg=2)
+            #    x_c = x_val - self.true_center_x
+            #    y_c = y_val - self.true_center_y
+            #    u = x_c**2 + y_c**2 + self.f**2
+            #    A = x_c * vx_val + y_c * vy_val
+            #    B = vx_val**2 + vy_val**2 + x_c * ax_val + y_c * ay_val
+            #    
+            #    w = u**(-0.5)
+            #    w_dt = -(u**(-1.5)) * A
+            #    w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
+            #    
+            #    total_e, _ += detector.compute_projective_bending_energy(
+            #        self.T, x_c, y_c, vx_val, vy_val, ax_val, ay_val, w, w_dt, w_ddt, self.f
+            #    )
+            #
+            #self.total_energy_text.set_text(f"Total Energy:\n{total_e:.2f}")
             
             # Re-initialize visual elements
             self.fit_artist, = self.ax_img.plot([], [], color='red', linewidth=3, zorder=4)
@@ -182,8 +182,8 @@ class KinematicsGUI:
         w_dt = -(u**(-1.5)) * A
         w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
         
-        self.current_energy, _ = detector.compute_projective_bending_energy(self.T, x_c, y_c, vx, vy, ax, ay, w, w_dt, w_ddt, self.f)
-        self.ax_img.set_title(f"Energy: {self.current_energy:.2f} | Hover to view kinematics")
+        #self.current_energy, _ = detector.compute_projective_bending_energy(self.T, x_c, y_c, vx, vy, ax, ay, w, w_dt, w_ddt, self.f)
+        #self.ax_img.set_title(f"Energy: {self.current_energy:.2f} | Hover to view kinematics")
         
         if self.last_mouse_event:
             self.on_mouse_move(self.last_mouse_event)
@@ -205,7 +205,7 @@ class KinematicsGUI:
         
         mag_v = np.hypot(u_v, v_v)
         mag_a = np.hypot(u_a, v_a)
-        self.ax_img.set_title(f"Energy: {self.current_energy:.1f} | |Vel|: {mag_v:.0f}, |Acc|: {mag_a:.0f}")
+        #self.ax_img.set_title(f"Energy: {self.current_energy:.1f} | |Vel|: {mag_v:.0f}, |Acc|: {mag_a:.0f}")
         
         fixed_disp_scale = 100.0
         max_disp_scale = 200.0 
