@@ -50,6 +50,7 @@ def run_test():
     
     # 5. Fit the surface using the energy functional script
     fitted_Rho, _, _, _, _, _ = detector.surface_fit(U_grid, V_grid, cloud_dataset, deg=2, bin_size=0.4)
+    fitted_Rho = np.array(fitted_Rho)
     
     # Scale the evaluation grid coordinates by the fitted Rho
     X_fit = fitted_Rho * X

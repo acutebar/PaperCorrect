@@ -23,7 +23,7 @@ GD_LEARNING_RATE = 0.05
 GD_CONTROL_POINTS = 64           
 
 TIME_DOMAIN_STEPS = 50           
-MESH_DENSITY = 250                
+MESH_DENSITY = 60                
 
 CURVE_MIN_LENGTH = 5            
 CURVE_MAX_COUNT = 200             
