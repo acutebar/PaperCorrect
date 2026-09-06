@@ -17,7 +17,7 @@ from detector.energy import surface_fit, total_energy
 # =============================================================================
 # GLOBAL HYPERPARAMETERS
 # =============================================================================
-GD_STEPS = 100                   
+GD_STEPS = 200                   
 GD_NORM_CUTOFF = 1e-5            
 GD_LEARNING_RATE = 0.0005          
 GD_CONTROL_GRID_MULT = 20         # Creates an 8x8 control point grid over the cropped area

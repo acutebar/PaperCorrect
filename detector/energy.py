@@ -184,7 +184,7 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, arcmultiply
         gamma_tt = w_tt_ * P + 2 * w_t_ * P_t + w_ * P_tt
 
         v_cross_a = torch.linalg.cross(gamma_t, gamma_tt, dim=1)
-        a_T = (v_cross_a * N_vec.detach()).sum(dim=1)
+        a_T = (v_cross_a * N_vec).sum(dim=1)
 
         speed_sq = (gamma_t**2).sum(dim=1)
         speed_sq_clamped = torch.clamp(speed_sq, min=1e-12)
