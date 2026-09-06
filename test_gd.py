@@ -19,8 +19,8 @@ from detector.energy import surface_fit, total_energy
 # =============================================================================
 GD_STEPS = 200                   
 GD_NORM_CUTOFF = 1e-5            
-GD_LEARNING_RATE = 0.0005          
-GD_CONTROL_GRID_MULT = 20         # Creates an 8x8 control point grid over the cropped area
+GD_LEARNING_RATE = 0.001          
+GD_CONTROL_GRID_MULT = 10         # Creates an 8x8 control point grid over the cropped area
 
 TIME_DOMAIN_STEPS = 100           
 MESH_DENSITY = 60                
@@ -29,8 +29,8 @@ CURVE_MIN_LENGTH = 5
 CURVE_MAX_COUNT = 200             
 ENERGY_CUTOFF = 3.0
 
-CURVE_BIN_SIZE = 0.13            # Bin size for B-spline curve fitting in normalized space
-SURFACE_BIN_SIZE = 0.15          # Bin size for 3D surface mesh rendering
+CURVE_BIN_SIZE = 0.25            # Bin size for B-spline curve fitting in normalized space
+SURFACE_BIN_SIZE = 0.25          # Bin size for 3D surface mesh rendering
 # =============================================================================
 
 def get_focal_length_pixels(image_path):

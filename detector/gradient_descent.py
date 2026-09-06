@@ -71,6 +71,8 @@ def run_gradient_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, 
         grad_norm = cloud_values.grad.norm().item()
         if (i + 1) % max(1, steps // 10) == 0 or i == 0 or i == steps - 1:
             print(f"  [GD Step {i+1:3d}/{steps}] Energy: {TE.item():.4f} | Grad Norm: {grad_norm:.6f}")
+        else:
+            print(f"  [GD Step {i+1:3d}/{steps}] Energy: {TE.item():.4f} | Grad Norm: {grad_norm:.6f}")
             
         if grad_norm < eps:
             print(f"  [GD] Converged at step {i+1} with gradient norm {grad_norm:.6e}")

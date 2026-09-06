@@ -233,4 +233,9 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, arcmultiply
     var_E = lambda_var * var
     total_E = total_E + lambda_var * var
 
-    return (total_E, geo_E, mean_E, gauss_E, height_E, var_E)
+    _, _, _, w_xx_g, w_yy_g, w_xy_g = surface_fit(cloud_coords[:, 0], cloud_coords[:, 1], deformation_cloud, deg=2, bin_size=0.05)
+    lambda_surf = 1
+    surf_E = lambda_surf * torch.mean(w_xx_g**2 + 2.0 * w_xy_g**2 + w_yy_g**2)
+    total_E = total_E + surf_E
+
+    return (total_E, geo_E, mean_E, gauss_E, height_E, var_E, surf_E)
