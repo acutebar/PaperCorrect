@@ -55,11 +55,11 @@ def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
     
     return torch.column_stack([u, v, w])
 
-def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-4, initial_cloud=None):
-    return run_adam_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud)
+def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-4, initial_cloud=None, deg=2, bin_size=0.5):
+    return run_adam_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud, deg, bin_size)
 
 
-def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.001, steps=500, eps=1e-5, initial_cloud=None):
+def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.001, steps=500, eps=1e-5, initial_cloud=None, deg=2, bin_size=0.5):
     deformation_cloud = initial_cloud 
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
@@ -80,7 +80,7 @@ def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.00
 
     for i in range(steps):
         #optimizer.zero_grad()
-        TE = total_energy(t, curves, cloud_coords, cloud_values, f)
+        TE = total_energy(t, curves, cloud_coords, cloud_values, f, deg, bin_size)
         TE.backward()
         
         grad_norm = cloud_values.grad.norm().item()
@@ -89,6 +89,14 @@ def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.00
         # ---------------------------------------------------------
         # Plot check: first 5 steps (i < 5), every n/10th step, or last step
         # ---------------------------------------------------------
+        all_mins = [ax.get_xlim()[0], ax.get_ylim()[0], ax.get_zlim()[0]]
+        all_maxs = [ax.get_xlim()[1], ax.get_ylim()[1], ax.get_zlim()[1]]
+        common_lim = (min(all_mins), max(all_maxs))
+        
+        ax.set_xlim(common_lim)
+        ax.set_ylim(common_lim)
+        ax.set_zlim(common_lim)
+        ax.set_box_aspect([1, 1, 1])
         interval = max(1, steps // 10)
         if i < 5 or (i + 1) % interval == 0 or i == steps - 1:
             with torch.no_grad():
@@ -97,7 +105,7 @@ def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.00
                 # Physical 3D projection: (w * x, w * y, w * f)
                 px = (w_flat * x_flat).reshape(grid_dim, grid_dim)
                 py = (w_flat * y_flat).reshape(grid_dim, grid_dim)
-                pz = (w_flat * f).reshape(grid_dim, grid_dim)
+                pz = (-w_flat * f).reshape(grid_dim, grid_dim)
                 
                 ax.clear()
                 ax.plot_surface(px, py, pz, cmap='viridis', edgecolor='none', alpha=0.9)
@@ -122,7 +130,7 @@ def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.00
 
     return torch.column_stack([cloud_coords, cloud_values])
 
-def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-5, initial_cloud=None):
+def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-5, initial_cloud=None, deg=2, bin_size=0.5):
     deformation_cloud = initial_cloud
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
@@ -145,7 +153,7 @@ def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, step
 
     for i in range(steps):
         optimizer.zero_grad()
-        TE = total_energy(t, curves, cloud_coords, cloud_values, f)
+        TE = total_energy(t, curves, cloud_coords, cloud_values, f, deg, bin_size)
         TE.backward()
         
         grad_norm = cloud_values.grad.norm().item()
@@ -154,18 +162,41 @@ def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, step
         # ---------------------------------------------------------
         # Plot check: first 5 steps (i < 5), every n/10th step, or last step
         # ---------------------------------------------------------
+
         interval = max(1, steps // 10)
         if i < 5 or (i + 1) % interval == 0 or i == steps - 1:
             with torch.no_grad():
                 w_flat = cloud_values.detach().cpu().numpy()
+                w_fit, _, _, _, _, _ = surface_fit(cloud_coords[:, 0], cloud_coords[:, 1], torch.column_stack([cloud_coords, cloud_values]), deg=deg, bin_size=bin_size)
                 
                 # Physical 3D projection: (w * x, w * y, w * f)
-                px = (w_flat * x_flat).reshape(grid_dim, grid_dim)
-                py = (w_flat * y_flat).reshape(grid_dim, grid_dim)
-                pz = (w_flat * f).reshape(grid_dim, grid_dim)
-                
+                px = (w_fit * x_flat).reshape(grid_dim, grid_dim)
+                py = (w_fit * y_flat).reshape(grid_dim, grid_dim)
+                pz = (-w_fit * f).reshape(grid_dim, grid_dim)
+
+                qx = (w_flat * x_flat).reshape(grid_dim, grid_dim)
+                qy = (w_flat * y_flat).reshape(grid_dim, grid_dim)
+                qz = (-w_flat * f).reshape(grid_dim, grid_dim)
+
+
+                #if surf_plot is not None:
+                #    surf_plot.remove()
+
                 ax.clear()
-                ax.plot_surface(px, py, pz, cmap='viridis', edgecolor='none', alpha=0.9)
+                
+                #ax.plot_surface(px, py, pz, cmap='viridis', edgecolor='none', alpha=0.9)
+                ax.plot_surface(qx, qy, qz, cmap='gray', edgecolor='none', alpha=0.9)
+
+
+                #all_mins = [ax.get_xlim()[0], ax.get_ylim()[0], ax.get_zlim()[0]]
+                #all_maxs = [ax.get_xlim()[1], ax.get_ylim()[1], ax.get_zlim()[1]]
+                #common_lim = (min(all_mins), max(all_maxs))
+                #
+                #ax.set_xlim(common_lim)
+                #ax.set_ylim(common_lim)
+                #ax.set_zlim(common_lim)
+                #ax.set_box_aspect([1, 1, 1])
+
                 ax.set_title(f"Step {i+1}/{steps} | Energy: {TE.item():.4f}")
                 ax.set_xlabel("X")
                 ax.set_ylabel("Y")
@@ -173,7 +204,7 @@ def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, step
                 
                 fig.canvas.draw()
                 fig.canvas.flush_events()
-                plt.pause(0.001)
+                plt.pause(1.0)
 
         if grad_norm < eps:
             print(f"  [GD] Converged at step {i+1} with gradient norm {grad_norm:.6e}")
@@ -186,7 +217,7 @@ def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, step
 
     return torch.column_stack([cloud_coords, cloud_values])
 
-def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps, x_start, x_end, y_start, y_end, mult=100):
+def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps, x_start, x_end, y_start, y_end, mult=100, deg=2, bin_size=0.5):
     span = torch.pi / 3
     flat_cloud = generate_flat_cloud(x_start, x_end, y_start, y_end, mult)
     
@@ -204,7 +235,9 @@ def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate,
             learning_rate=learning_rate, 
             steps=steps, 
             eps=eps,
-            initial_cloud=init_cloud
+            initial_cloud=init_cloud,
+            deg=deg,
+            bin_size=bin_size
         )
         
         with torch.no_grad():

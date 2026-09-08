@@ -85,7 +85,7 @@ def fn_fit(x, cloud, deg=2, bin_size=10):
         local_cloudx = cloudx[mask]
         local_cloudy = cloudy[mask]
         
-        local_poly = np.polynomial.Polynomial.fit(local_cloudx, local_cloudy, deg=deg)
+        local_poly = np.polynomial.Polynomial.fit(local_cloudx, local_cloudy, deg=2)
         local_fits[i] = local_poly
 
     valid_fits = {k: v for k, v in local_fits.items() if v is not None}

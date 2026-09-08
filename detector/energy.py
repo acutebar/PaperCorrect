@@ -23,7 +23,7 @@ def bump_2d(u, v, du, dv, u0, v0, ju, jv, deg=2):
     
     return B_val, B_u, B_v, B_uu, B_vv, B_uv
 
-def surface_fit(u, v, cloud, deg=2, bin_size=1):
+def surface_fit(u, v, cloud, deg=2, bin_size=1.0):
     u = torch.as_tensor(u, dtype=torch.float64, device=cloud.device)
     v = torch.as_tensor(v, dtype=torch.float64, device=cloud.device)
     cloud = torch.as_tensor(cloud, dtype=torch.float64)
@@ -123,12 +123,12 @@ def surface_fit(u, v, cloud, deg=2, bin_size=1):
     return g_val, g_u, g_v, g_uu, g_vv, g_uv
 
 
-def total_energy(T, curves, cloud_coords, cloud_values, f=1.0):
-    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f)[0]
-def evaluate_complexity(T, curves, cloud_coords, cloud_values, f=1.0):
-    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f)[2]
+def total_energy(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_size=0.5):
+    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f, deg)[0]
+def evaluate_complexity(T, curves, cloud_coords, cloud_values, f=1.0, deg=2):
+    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f, deg)[2]
 
-def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, arcmultiply=False):
+def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_size=0.5, arcmultiply=False):
     total_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
     t = torch.as_tensor(T)
     geo_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
@@ -144,6 +144,7 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, arcmultiply
     lambda_h = 0.0
     lambda_k = 0.0
     lambda_var = 0.0
+    lambda_surf = 0.0
 
     for curve in curves:
         x, y = curve.point_at(t)
@@ -158,7 +159,7 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, arcmultiply
         ay = torch.as_tensor(ay, dtype=torch.float64).ravel()
         f_tensor = torch.full_like(x, f)
 
-        w, w_x, w_y, w_xx, w_yy, w_xy = surface_fit(x, y, deformation_cloud, deg=2, bin_size=0.05)
+        w, w_x, w_y, w_xx, w_yy, w_xy = surface_fit(x, y, deformation_cloud, deg, bin_size)
         
         gamma_x = torch.stack([w_x * x + w, w_x * y, w_x * f_tensor], dim=1)
         gamma_y = torch.stack([w_y * x, w_y * y + w, w_y * f_tensor], dim=1)
@@ -232,14 +233,15 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, arcmultiply
     else:
         var = torch.tensor(0.0, dtype=torch.float64, device=total_E.device)
 
-    print("Length variance ", lambda_var * var)
+    #print("Length variance ", lambda_var * var)
 
     var_E = lambda_var * var
     total_E = total_E + lambda_var * var
 
-    _, _, _, w_xx_g, w_yy_g, w_xy_g = surface_fit(cloud_coords[:, 0], cloud_coords[:, 1], deformation_cloud, deg=2, bin_size=0.05)
-    lambda_surf = 0
+    _, _, _, w_xx_g, w_yy_g, w_xy_g = surface_fit(cloud_coords[:, 0], cloud_coords[:, 1], deformation_cloud, deg, bin_size)
     surf_E = lambda_surf * torch.mean(w_xx_g**2 + 2.0 * w_xy_g**2 + w_yy_g**2)
     total_E = total_E + surf_E
+
+    print(f"\tEnergy breakdown: Geodesic = {geo_E} | Mean Curvature = {mean_E} | Gauss Curvature = {gauss_E} | \n\t Height penalty = {height_E} | Variance penalty = {var_E} | Surface penalty = {surf_E}", (total_E, geo_E, mean_E, gauss_E, height_E, var_E, surf_E))
 
     return (total_E, geo_E, mean_E, gauss_E, height_E, var_E, surf_E)

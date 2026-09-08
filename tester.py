@@ -1,9 +1,9 @@
-import basics
+import detector
 import cv2 as cv
 import numpy as np
 import matplotlib.pyplot as plt
 
-img = cv.imread("crump_uncropped.jpeg")
+img = cv.imread("antiprinter.jpeg")
 gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
 x_lim,y_lim = gray_img.shape
@@ -19,21 +19,21 @@ plt.show()
 
 
 print("\nRunning line detection (this may take a moment)...")
-detector = basics.LineDetector(width=2, height=10, step=5) 
+detector = detector.LineDetector(width=2, height=10, step=5) 
 lines = detector.findall_lines(cleaned_img)
 lines.sort(key = lambda x: len(x))
 
 line = lines[-4]
 #print(line)
 
-all_lines_img = basics.display_lines(cleaned_img, [line], thickness=2)
+all_lines_img = detector.display_lines(cleaned_img, [line], thickness=2)
 plt.imshow(all_lines_img, cmap='gray')
 plt.show()
 
 
 
 T = np.linspace(0, 1, 1000)
-(x, y), (vx, vy), (ax, ay) = basics.curve_fit(T, line, bin_size=0.13, deg=2)
+(x, y), (vx, vy), (ax, ay) = detector.curve_fit(T, line, bin_size=0.13, deg=2)
 
 # Energy stuff
 img_height, img_width = gray_img.shape
@@ -55,8 +55,8 @@ w = u**(-0.5)
 w_dt = -(u**(-1.5)) * A
 w_ddt = 3 * (u**(-2.5)) * (A**2) - (u**(-1.5)) * B
 f=2912.0
-energy = basics.compute_projective_bending_energy(T, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f)
-print(energy)
+#energy = detector.compute_projective_bending_energy(T, x, y, vx, vy, ax, ay, w, w_dt, w_ddt, f)
+#print(energy)
 #print(x)
 
 fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(10, 4))

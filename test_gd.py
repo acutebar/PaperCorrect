@@ -17,20 +17,21 @@ from detector.energy import surface_fit, total_energy
 # =============================================================================
 # GLOBAL HYPERPARAMETERS
 # =============================================================================
-GD_STEPS = 1                   
+GD_STEPS = 2                   
 GD_NORM_CUTOFF = 0.5            
 GD_LEARNING_RATE = 0.001          
-GD_CONTROL_GRID_MULT = 10         # Creates an 8x8 control point grid over the cropped area
+GD_CONTROL_GRID_MULT = 70         # Creates an 8x8 control point grid over the cropped area
 
 TIME_DOMAIN_STEPS = 100           
 MESH_DENSITY = 60                
 
-CURVE_MIN_LENGTH = 5            
+CURVE_MIN_LENGTH = 40            
 CURVE_MAX_COUNT = 200             
 ENERGY_CUTOFF = 3.0
 
-CURVE_BIN_SIZE = 0.25            # Bin size for B-spline curve fitting in normalized space
-SURFACE_BIN_SIZE = 0.25          # Bin size for 3D surface mesh rendering
+CURVE_BIN_SIZE = 0.2           # Bin size for B-spline curve fitting in normalized space
+SURFACE_BIN_SIZE = 0.05         # Bin size for 3D surface mesh rendering
+SPLINE_DEG = 3
 # =============================================================================
 
 def get_focal_length_pixels(image_path):
@@ -134,7 +135,7 @@ class PaperCorrectApp:
                  (pt[0] + y_min - h / 2.0) / self.f_pixels) 
                 for pt in line
             ]
-            cur_curve = detector.Curve(centered_line_norm, deg=2, bin_size=CURVE_BIN_SIZE)
+            cur_curve = detector.Curve(centered_line_norm, deg=SPLINE_DEG, bin_size=CURVE_BIN_SIZE)
             
             with torch.no_grad():
                 e = total_energy(self.T_array, [cur_curve], self.baseline_coords, self.baseline_values, f=1.0).item()
@@ -222,7 +223,9 @@ class PaperCorrectApp:
             eps=GD_NORM_CUTOFF,
             x_start=self.x_min_norm, x_end=self.x_max_norm,
             y_start=self.y_min_norm, y_end=self.y_max_norm,
-            mult=GD_CONTROL_GRID_MULT
+            mult=GD_CONTROL_GRID_MULT,
+            deg=SPLINE_DEG,
+            bin_size=SURFACE_BIN_SIZE
         )
         print(f"GD finished in {time.time() - t_start:.2f}s.")
         
@@ -238,13 +241,13 @@ class PaperCorrectApp:
         v_mesh_flat = torch.tensor(Y_norm.flatten(), dtype=torch.float64)
         
         # Fit depth parameter w over normalized coordinates (using scaled SURFACE_BIN_SIZE)
-        w_mesh_tensor = surface_fit(u_mesh_flat, v_mesh_flat, opt_cloud, bin_size=SURFACE_BIN_SIZE)[0]
+        w_mesh_tensor = surface_fit(u_mesh_flat, v_mesh_flat, opt_cloud, deg=SPLINE_DEG, bin_size=SURFACE_BIN_SIZE)[0]
         w_mesh = w_mesh_tensor.detach().numpy().reshape(X_norm.shape)
         
         # Map physical 3D coordinates, scaled back to pixel magnitude
         P_X = w_mesh * (X_norm * self.f_pixels)
-        P_Y = w_mesh * (Y_norm * self.f_pixels)
-        P_Z = w_mesh * self.f_pixels
+        P_Y = -w_mesh * (Y_norm * self.f_pixels)
+        P_Z = -w_mesh * self.f_pixels
         
         interp = RegularGridInterpolator((Y_grid_norm, X_grid_norm), w_mesh, bounds_error=False, fill_value=None)
         
@@ -264,10 +267,22 @@ class PaperCorrectApp:
         
         norm_rgb = self.cropped_rgb.astype(float) / 255.0
         tex = cv.resize(norm_rgb, (MESH_DENSITY, MESH_DENSITY)) 
+
+        pz = P_Z - np.mean(P_Z)
         
-        self.surf_tex = ax_3d.plot_surface(P_X, P_Y, P_Z, facecolors=tex, shade=False, alpha=0.9, edgecolor='none', rcount=MESH_DENSITY, ccount=MESH_DENSITY)
-        self.surf_solid = ax_3d.plot_surface(P_X, P_Y, P_Z, color='gainsboro', shade=True, alpha=0.9, edgecolor='none', rcount=MESH_DENSITY, ccount=MESH_DENSITY)
+        self.surf_tex = ax_3d.plot_surface(P_X, P_Y, pz, facecolors=tex, shade=False, alpha=0.9, edgecolor='none', rcount=MESH_DENSITY, ccount=MESH_DENSITY)
+        self.surf_solid = ax_3d.plot_surface(P_X, P_Y, pz, color='gainsboro', shade=True, alpha=0.9, edgecolor='none', rcount=MESH_DENSITY, ccount=MESH_DENSITY)
         self.surf_solid.set_visible(False)
+
+        all_mins = [ax_3d.get_xlim()[0], ax_3d.get_ylim()[0], ax_3d.get_zlim()[0]]
+        all_maxs = [ax_3d.get_xlim()[1], ax_3d.get_ylim()[1], ax_3d.get_zlim()[1]]
+        common_lim = (min(all_mins), max(all_maxs))
+        
+        ax_3d.set_xlim(common_lim)
+        ax_3d.set_ylim(common_lim)
+        ax_3d.set_zlim(common_lim)
+        ax_3d.set_box_aspect([1, 1, 1])
+
         
         ax_3d.set_title(f"3D Reconstructed Paper Surface\nTotal Final Energy: {final_energy:.4f}")
         ax_3d.set_xlabel("X (Pixels)"); ax_3d.set_ylabel("Y (Pixels)"); ax_3d.set_zlabel("Depth (Z)")
@@ -294,8 +309,8 @@ class PaperCorrectApp:
                 w_curve = interp((cy_valid, cx_valid))
                 
                 curve_3d_x = w_curve * (cx_valid * self.f_pixels)
-                curve_3d_y = w_curve * (cy_valid * self.f_pixels)
-                curve_3d_z = w_curve * self.f_pixels
+                curve_3d_y = -w_curve * (cy_valid * self.f_pixels)
+                curve_3d_z = -w_curve * self.f_pixels - np.mean(P_Z)
                 
                 ln3, = ax_3d.plot(curve_3d_x, curve_3d_y, curve_3d_z, color='cyan', linewidth=2.5, zorder=10)
                 self.toggleable_lines.append(ln3)
