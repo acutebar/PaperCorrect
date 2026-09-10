@@ -17,7 +17,7 @@ from detector.energy import surface_fit, total_energy
 # =============================================================================
 # GLOBAL HYPERPARAMETERS
 # =============================================================================
-GD_STEPS = 2                   
+GD_STEPS = 100                   
 GD_NORM_CUTOFF = 0.5            
 GD_LEARNING_RATE = 0.001          
 GD_CONTROL_GRID_MULT = 70         # Creates an 8x8 control point grid over the cropped area
@@ -30,7 +30,7 @@ CURVE_MAX_COUNT = 200
 ENERGY_CUTOFF = 3.0
 
 CURVE_BIN_SIZE = 0.2           # Bin size for B-spline curve fitting in normalized space
-SURFACE_BIN_SIZE = 0.05         # Bin size for 3D surface mesh rendering
+SURFACE_BIN_SIZE = 2         # Bin size for 3D surface mesh rendering
 SPLINE_DEG = 3
 # =============================================================================
 
@@ -316,7 +316,7 @@ class PaperCorrectApp:
                 self.toggleable_lines.append(ln3)
         
         ax_check = fig.add_axes([0.02, 0.5, 0.12, 0.15])
-        self.check_buttons = CheckButtons(ax_check, ['Texture', 'Lines'], [True, True])
+        self.check_buttons = CheckButtons(ax_check, ['Texture', 'Lines'], [True, False])
         
         def ui_toggle(label):
             if label == 'Texture':
@@ -332,6 +332,7 @@ class PaperCorrectApp:
         self.check_buttons.on_clicked(ui_toggle)
         
         ax_3d.view_init(elev=25, azim=-65)
+        plt.savefig("embedding.png", dpi=300, bbox_inches='tight')
         plt.show()
 
 if __name__ == "__main__":
