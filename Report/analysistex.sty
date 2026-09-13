@@ -1,0 +1,187 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{analysistex}[2014/08/21 Example package]
+
+\RequirePackage[a4paper, total={7in, 9.5in}]{geometry}
+\RequirePackage{amsmath}
+\RequirePackage{amsthm}
+\RequirePackage{amssymb}
+\RequirePackage{stackengine}
+\RequirePackage{mathtools}
+\RequirePackage{amsfonts}
+\RequirePackage{hyperref}
+\RequirePackage[dvipsnames]{xcolor}
+\RequirePackage{fancyhdr}
+\RequirePackage{lastpage}
+\RequirePackage{bm}
+\RequirePackage{colonequals}
+\RequirePackage{tikz}
+
+%\RequirePackage{dutchcal}
+%\RequirePackage{mathpazo}
+\RequirePackage[T1]{fontenc}
+%\RequirePackage{newtxtext}
+%\RequirePackage{newtxmath}
+
+%% Some settings
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    filecolor=magenta,      
+    urlcolor=blue,
+}
+\setlength\parindent{0pt}
+
+\pagestyle{fancy}
+\fancyhf{} % clear defaults
+
+\fancyhead[R]{\color{blue} \href{mailto:achyut@uchicago.edu}{Achyut(achyut@uchicago.edu)}}
+\fancyhead[L]{\titlename}
+\cfoot{\bf Page \thepage~of~\pageref{LastPage}}
+
+\fancypagestyle{style2}{
+\fancyhead{}
+\cfoot{\bf Page \thepage~of~\pageref{LastPage}}
+\renewcommand{\headrulewidth}{0pt}
+}
+
+%\renewcommand{\familydefault}{\ttdefault}
+
+%% Title
+%\title{\bf \color{BrickRed} Honors Analysis Math 20800}
+%\author{\Large{\textbf{Homework 7}} \\\\ \color{blue} Achyut Bharadwaj\color{blue}\\\href{mailto:achyut@uchicago.edu}{achyut@uchicago.edu}}
+%\date{}
+\makeatletter
+\renewcommand{\maketitle}{%
+  \begin{center}
+    {\LARGE\bfseries\@title \par}
+    \vspace{1em}
+    {\large\@author \par}
+    \vspace{0.5em}
+    {\@date \par}
+  \end{center}
+  \vspace{1em}
+  \thispagestyle{plain}
+}
+\makeatother
+
+
+%% New commands
+
+\newcommand{\bA}{\mathbb{A}}
+\newcommand{\bB}{\mathbb{B}}
+\newcommand{\bC}{\mathbb{C}}
+\newcommand{\bD}{\mathbb{D}}
+\newcommand{\bE}{\mathbb{E}}
+\newcommand{\bF}{\mathbb{F}}
+\newcommand{\bG}{\mathbb{G}}
+\newcommand{\bH}{\mathbb{H}}
+\newcommand{\bI}{\mathbb{I}}
+\newcommand{\bJ}{\mathbb{J}}
+\newcommand{\bK}{\mathbb{K}}
+\newcommand{\bL}{\mathbb{L}}
+\newcommand{\bM}{\mathbb{M}}
+\newcommand{\bN}{\mathbb{N}}
+\newcommand{\bO}{\mathbb{O}}
+\newcommand{\bP}{\mathbb{P}}
+\newcommand{\bQ}{\mathbb{Q}}
+\newcommand{\bR}{\mathbb{R}}
+\newcommand{\bS}{\mathbb{S}}
+\newcommand{\bT}{\mathbb{T}}
+\newcommand{\bU}{\mathbb{U}}
+\newcommand{\bV}{\mathbb{V}}
+\newcommand{\bW}{\mathbb{W}}
+\newcommand{\bX}{\mathbb{X}}
+\newcommand{\bY}{\mathbb{Y}}
+\newcommand{\bZ}{\mathbb{Z}}
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\del}{\partial}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\C}{\mathbb{C}}
+\renewcommand{\P}{\mathbb{P}}
+\newcommand{\from}{\colon}
+\newcommand{\inv}[1]{#1^{-1}}
+\newcommand{\pabs}[1]{\left\lvert #1 \right\rvert_p}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\newcommand{\normp}[2][p]{\left\lVert #2 \right\rVert_{#1}}
+\newcommand{\abs}[1]{\left\lvert #1 \right\rvert}
+\newcommand{\aabs}[1]{\lVert #1 \rVert}
+\newcommand{\defeq}{\vcentcolon=}
+\newcommand{\eqdef}{=\vcentcolon}
+\newcommand{\disc}[2][0]{D\left(#1;#2^-\right)}
+\newcommand{\floor}[1]{\left\lfloor#1\right\rfloor}
+\newcommand{\qr}[2]{\left(\frac{#1}{#2}\right)}
+\newcommand{\seq}[2][k]{\left(#2_{#1}\right)_{#1\in\mathbb{N}}}
+\newcommand{\comp}[1]{\prescript{{c}}{}{#1}}
+\newcommand{\gen}[1]{\left\langle#1\right\rangle}
+\newcommand{\ceil}[1]{\left\lceil#1\right\rceil}
+\newcommand{\dd}{\mathrm d}
+%\newcommand{\frak}[1]{\mathfrak{#1}}
+\newcommand{\uniform}{\rightrightarrows}
+
+\newcommand{\weakto}{\rightharpoonup}
+\newcommand{\weakstarto}{\overset{\ast}{\rightharpoonup}}
+\newcommand{\weakclosure}[1]{\closure{#1}^{\sigma}}
+
+\newcommand{\interior}[1]{#1^\circ}
+\newcommand{\closure}[1]{\overline{#1}}
+\newcommand{\upint}[2]{
+  \overline{\int_{#1}^{#2}}
+}
+\newcommand{\loint}[2]{
+  \underline{\int_{#1}^{#2}}
+}
+\newcommand{\vect}[1]{\ensuremath{\mathbf{#1}}}
+\newcommand{\Epsilon}{\mathcal{E}}
+\renewcommand{\cal}[1]{\mathcal{#1}}
+
+% Frequent mistakes
+\newcommand{\susbet}{\subset}
+\newcommand{\emtpyset}{\emptyset}
+
+% Operators
+
+\DeclareMathOperator{\aff}{Aff}
+\DeclareMathOperator{\acc}{acc}
+\DeclareMathOperator{\aut}{Aut}
+\DeclareMathOperator{\lub}{lub}
+\DeclareMathOperator{\pol}{Pol}
+\DeclareMathOperator{\spann}{span}
+\DeclareMathOperator{\diam}{diam}
+\DeclareMathOperator{\dist}{dist}
+\DeclareMathOperator{\adj}{adj}
+\DeclareMathOperator{\id}{id}
+\DeclareMathOperator{\End}{End}
+\DeclareMathOperator{\codim}{codim}
+\DeclareMathOperator{\coker}{coker}
+\DeclareMathOperator{\gl}{GL}
+\DeclareMathOperator{\im}{Im}
+\DeclareMathOperator{\Inv}{inv}
+\DeclareMathOperator{\osc}{osc}
+\DeclareMathOperator{\relbd}{relbd}
+\DeclareMathOperator{\relint}{relint}
+\DeclareMathOperator{\curl}{curl}
+\DeclareMathOperator{\dv}{div}
+\DeclareMathOperator{\conv}{conv}
+\DeclareMathOperator{\sgn}{sgn}
+
+\newcommand{\m}{\mathrm}
+
+
+%% Theorems
+\newtheorem{lemma}{Lemma}
+\newtheorem{exercise}{Exercise}
+\newtheorem{defn}{Definition}
+\newtheorem{example}{Example}
+
+\makeatletter
+\AtBeginDocument{%
+  \let\titlename\@title
+}
+\makeatother
+
+\AtBeginDocument{\maketitle}
+
