@@ -17,7 +17,7 @@ jobs:
       - name: Compile LaTeX
         uses: xu-cheng/latex-action@v3
         with:
-          root_file: Report/report.tex # Path to your .tex file (adjust if needed)
+          root_file: report.tex # Path to your .tex file (adjust if needed)
           working_directory: Report   # The folder where your .tex and images live
 
       - name: Upload PDF to Release
@@ -25,6 +25,6 @@ jobs:
         with:
           tag_name: latest
           name: "Latest PDF Build"
-          files: Report/report.pdf      # Path to the compiled PDF
+          files: report.pdf      # Path to the compiled PDF
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
