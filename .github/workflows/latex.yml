@@ -1,0 +1,30 @@
+name: Build and Release PDF
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Needed to create and update Releases
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile LaTeX
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: Report/report.tex # Path to your .tex file (adjust if needed)
+          working_directory: Report   # The folder where your .tex and images live
+
+      - name: Upload PDF to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest PDF Build"
+          files: Report/report.pdf      # Path to the compiled PDF
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
