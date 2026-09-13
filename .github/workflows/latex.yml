@@ -25,6 +25,6 @@ jobs:
         with:
           tag_name: latest
           name: "Latest PDF Build"
-          files: report.pdf      # Path to the compiled PDF
+          files: Report/report.pdf      # Path to the compiled PDF
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
