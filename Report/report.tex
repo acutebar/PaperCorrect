@@ -93,8 +93,8 @@ Conceptually, the algorithm used to execute this task is as follows: We iterate 
 we fix a $1\times n$ rectangle $Q$ (in practice, $2\times 5$ works well) with one corner fixed at $p$.
 This will resemble our velocity vector. We compute
 the mean pixel value of this rectangle. Following this, we rotate $Q$ by a small angle (for example $5$ degrees) repeatedly and measure the mean pixel value each time. We declare the minimum of all these pixel values is
-the direction in which the curve continues, provided that this value is below a fixed threshold. We then let $p$ be the new point that the vector $Q$ points to and continue the process until we see no more points 
-new points that are below the threshold. \\~\\
+the direction in which the curve continues, provided that this value is below a fixed threshold. We then let $p$ be the new point that the vector $Q$ points to and continue the process until we see no new points 
+that are below the threshold. \\~\\
 In practice, executing this algorithm naively will result in the program detecting multiple broken curves along each large curve. This issue persists even if we maintain a global \verb|visited| list, and as we
 traverse our curve, add every point between the old pivot and the new point, along the vector, to the list (this is also required to prevent the program from getting stuck in a loop during traversal). \\~\\
 However, this does not suffice since our iteration might hit a midpoint of a curve well before it hits any end points, leading to the program attempting to trace a curve starting from a midpoint. This will give rise to broken
@@ -235,7 +235,7 @@ where $(x_0, y_0, f) = \gamma(t)$. It is clear that
 using the product rule. 
 Now, since the speed is not necessarily constant, we will have
 to take a further cross product with the velocity vector $\dot \gamma_\rho(t)$ to ensure that any nonzero tangential acceleration remains strictly along the direction of the curve (speeding up or slowing down only).
-Taking this into account, we in fact have $\ddot \gamma_\rho(t)^T = N(\gamma_\rho(t)) \cdot (\ddot \gamma_\rho(t)\times \dot \gamma_\rho(t))$. The rest of the calculations will depend on $\rho$ and $\gamma$ specifically, 
+Taking this into account, we in fact have $\ddot \gamma_\rho(t)^T = N(\gamma_\rho(t)) \cdot (\dot \gamma_\rho(t)\times \ddot \gamma_\rho(t))$. The rest of the calculations will depend on $\rho$ and $\gamma$ specifically, 
 and is detailed in the \verb|evaluate_penalties| method of \verb|detector/energy.py|. \\~\\
 Finally, since in practice $\gamma(s)$ is defined in terms of an arbitrary parameter $s$ (ranging from $0$ to $1$ in our case),
 rather than its arclength (which will be denoted $dt$ as before), we need to make the change of variables $dt = \abs {\dot \gamma_\rho(t)}ds$,
@@ -246,7 +246,7 @@ we have
 This is because differentiating $\gamma_\rho(s)$ with respect to $s$ each time introduces a factor of $1/\abs{\dot \gamma_\rho(s)}$ exactly once. We are differentiating three times in the numerator and squaring
 which gives a factor of $\abs{\dot \gamma_\rho(s)}^{-6}$ and we finally multiply by $\abs{\dot \gamma_\rho(s)}$ due to change of variables to obtain a factor $\abs{\dot \gamma(s)}^{-5}$. \\~\\
 Other than the core geodesic energy computed above, the method \verb|evaluate_penalties| consists of many other penalties, which have currently been set to $0$, such as a penalty for high mean and Gaussian curvatures, 
-a penalty on high arclength length variance of geodesics and so on. The results can be fine tuned using these parameters, although we will stick to the geodesic energy for the most part.
+a penalty on high arclength variance of geodesics and so on. The results can be fine tuned using these parameters, although we will stick to the geodesic energy for the most part.
 
 \section{Gradient Descent}
 The final part of the algorithm is to use gradient descent to find a minimizer $\rho$ for $E$. Typically, gradient descent is used to minimize functions $f \from \R^N \to \R$ over finite dimensional spaces. We however
@@ -265,7 +265,7 @@ We elaborate on the last step. Backwards autodifferentiation allows us to comput
 not just performing the integration but also fitting the surface to $\rho$ to $\vect x$. In our implementation, we used PyTorch to perform autodifferentiation. Finally we use the usual
 gradient descent algorithm
 $\vect x_{n+1} = \vect x_n - \eta_n\grad E(\vect x_n)$ to find a function $\rho$ (approximated by $\vect x_{n+1}$) that better minimizes the energy (as compared to $\vect x_n$). The iteration is stopped after
-a fixed number of steps is completed, or is stopped early if the gradient falls below $0.5$ (the cutoff can be changed). \\~\\
+a fixed number of steps is completed, or is stopped early if the gradient falls below $0.5$ (this is set in \verb|test_gd.py| and the cutoff can be changed). \\~\\
 In particular, the last method is known as Vanilla gradient descent. This is implemented in \verb|detector/gradient_descent.py| by the method \verb|run_vanilla_descent|. While this shows good results, another 
 form of gradient descent used interchangeably in the project is gradient descent with momentum. This is implemented by \verb|run_adam_descent| using PyTorch's Adam descent method. 
 This method includes a momentum term to speed up convergence. \\

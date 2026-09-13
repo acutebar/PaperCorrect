@@ -9,4 +9,4 @@ venv/
 *.log
 *.fdb_latexmk
 *.pdf
-
+*.png
