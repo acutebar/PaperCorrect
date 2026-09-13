@@ -16,43 +16,28 @@
 \begin{document}
 
 \section{Introduction}
-The core aim of this project is to reconstruct a 3D surface from a single picture using information from geodesics on the surface. In particular, the focus is on reconstructing surfaces formed by ruled papers.
-In this case, the geodesics we use to extract information about 3D embedding are the rulings.\\~\\
-For example, consider a horizontally ruled paper that is curled in a cylindrical way along the vertical axis and away from the camera. Assume also that the camera is placed at a height above the paper along its center. 
-A picture will depict a straight horizontal line at the center with horizontal lines on either side of the middle line appearing increasingly curved towards the central line (see image below).
+The core aim of this project is to reconstruct a 3D surface from a single picture using information from geodesics on the surface. In particular, the focus is on reconstructing surfaces formed by ruled papers. In this case, the geodesics we use to extract information about the 3D embedding are the rulings: the straight lines printed on the paper, which appear curved in the two-dimensional image once the paper itself is curved in three dimensions. \\~\\
+Consider a horizontally ruled paper curled in a cylindrical way along the vertical axis and towards the camera, with the camera placed at a height above the paper along its center. The resulting two-dimensional image appears as a straight horizontal line at the center, with the horizontal lines on either side of it curving increasingly sharply the farther they are from the center line (see Figure below). This particular curl and camera placement are chosen only to make the example concrete; neither the underlying mathematics nor the implementation depends on them. 
 \begin{figure}[h]
   \centering
   \includegraphics[width=0.3\textwidth]{example_curve.png}
   \label{fig:example_curve}
 \end{figure}
-The goal is then to use this information about how the lines curve to recover the paper's original 3D embedding. Our method is as follows: we 
-compute the curvature of each ruling using the geometric form it assumes in the original picture. We integrate the square of the curvature along each geodesic and sum them to obtain the \emph{geodesic energy} of the
-flat image. We then
-deform the flat surface of the image in various ways (in three dimensions), compute the energy after these deformations, 
-and find the deformation of the surface that provides us with the minimum energy possible (using gradient descent).
-Theoretically, if the deformed surface matches the original 3D embedding, the energy must be exactly zero. \\~\\
-We provide a detailed explanation of the implementation and the method in the following sections. We begin by briefly explaining the method used to detect edges and clean up the image to isolate dark lines and detail
-the method used to detect and trace continuous curves on the image so as to recover a dense cluster of points that will be treated as a single curve. The next section will explain how the cluster of points is converted
-to an analytic curve whose derivatives (and hence curvature) are easy to compute. This method also generalizes to fitting surfaces to a cluster of points in three dimensions (which will be used later). Following this, 
-we proceed to mathematically explain the algorithm along with its implementation that allows us to compute the geodesic energy for any deformation of the original picture. We then explain the gradient descent used
-to minimize energy and explain why the algorithm is necessary. Finally we list some limitations of the current implementation along with methods to improve results.
 
-\section{Tracing Curves}
-This section will focus on detecting edges and isolating and tracing continuous curves from start to end. First, we briefly explain how a raw grayscale image is converted to black and white with all detected edges colored black
-and the rest of the background white. This is called adaptive thresholding. \\~\\
-The idea behind adaptive thresholding is simple: we iterate through all pixels in our original image (which is in grayscale). At each pixel, we compare the value of the pixel with the mean of its surroundings (for example, 
-take a neighborhood of the pixel formed by a 30 pixel circle around it). If the value falls below the mean minus the standard deviation, we color the pixel black. If not, the pixel remains white. This method can be found in
-\verb|detector/edge_detector.py|. \\~\\
-This method is noisy so it can be improved by first passing the grayscale image through a Gaussian blur filter. This acts as a low pass filter and removes noise. In particular, the transformation is given by the following equation:
+The goal is to use the information contained in the lines' curvatures to recover the paper's original 3D embedding. Our method is as follows: we compute the curvature of each geodesic using the geometric form it assumes in the original 2D
+image, integrate the square of this curvature along each geodesic, and sum the result across geodesics to obtain a net \emph{geodesic energy} of the flat image. We then compute a deformation of the flat surface and use a gradient descent algorithm to refine the computation to minimize the net geodesic energy. Theoretically, if the deformed surface matches the original 3D embedding, the energy must be exactly zero. \\~\\
+The remaining sections detail the implementation and methodology in the order of application. Section~\ref{sec.trace} covers edge detection and curve tracing, which clean up the image and recover a dense cluster of points for each geodesic. Section~\ref{sec.fit} explains the conversion of each point cluster into an analytic curve whose derivatives—and hence curvature—are analytically computable; this same method generalizes to fitting surfaces to a cloud of points in three dimensions, which is utilized later. Section~\ref{sec.core} mathematically formalizes the geodesic energy functional and its computation for an arbitrary deformation of the image. Section~\ref{sec.gd} describes the gradient descent scheme used to minimize this energy. Finally, Section~\ref{sec.isgood} justifies why this energy-based approach is preferable to solving the boundary-value PDE directly, and Section~\ref{sec.lim} concludes with the current limitations of the implementation and directions for future improvement.
+
+\section{Tracing Curves}\label{sec.trace}
+This section details the detection of edges and the isolation of continuous curves from start to end. First, the raw grayscale image is binarized, coloring detected edges black and the background white via a process known as adaptive thresholding. \\~\\
+The principle underlying adaptive thresholding involves iterating through all pixels in the grayscale image. At each pixel, the value is compared with the mean of a local neighborhood (e.g., a 30-pixel radius). If the value falls below the mean minus the standard deviation, the pixel is classified as black; otherwise, it remains white. This implementation is located in \verb|detector/edge_detector.py|. \\~\\
+To mitigate susceptibility to noise, the grayscale image is first smoothed using a Gaussian blur low-pass filter. The transformation is defined by the following equation:
 \[
   P_{\text{blur}}(x_0, y_0) = \sum_{(x, y) \in U}K(x-x_0, y-y_0) P(x, y)
 \]
-Here, $U$ is a small neighborhood of $(x_0, y_0)$, $P$ is the pixel value of the original image and $P_{\text{blur}}$ is the pixel value of the filtered image. Note also that $K$ denotes the Gaussian Kernel, which is simply 
-a normalized Gaussian distribution chosen appropriately for a given size of the neighborhood $U$. Note that it suffices to choose a square or circle of fixed dimension around the origin and shift it appropriately to obtain $U$. \\~\\
-The method is further improved if instead of taking the naive mean of pixels in the neighborhood, we take a weighted mean, where the weights are provided by the Gaussian Kernel. Often, the threshold for declaring a pixel
-to be black is a fixed number rather than based on standard deviation. For the rest of our project, we use Gaussian blur followed by OpenCV's adaptive thresholding module, which follows an implementation conceptually identical
-to the latter method. This is called directly in \verb|test_gd.py|. \\~\\
-Performing the above steps provides us with a clean image where the rulings are reliably blackened and noise reduced. See Figure \ref{fig:thresholding_pipeline} for results.
+Here, $U$ is a small neighborhood of $(x_0, y_0)$, $P$ is the pixel value of the original image, and $P_{\text{blur}}$ is the pixel value of the filtered image. The term $K$ denotes the Gaussian Kernel, which is a normalized Gaussian distribution chosen appropriately for a given size of the neighborhood $U$. It suffices to choose a square or circle of fixed dimension around the origin and shift it appropriately to obtain $U$. \\~\\
+This method is improved by using a weighted mean provided by the Gaussian Kernel rather than a naive unweighted mean. A fixed threshold parameter is often substituted for the standard deviation condition. For the remainder of the project, we use Gaussian blur followed by OpenCV's adaptive thresholding module, which implements this weighted approach. This is called directly in \verb|test_gd.py|. \\~\\
+These preprocessing steps yield a clean binarized image with reduced noise and distinctly blackened rulings. See Figure \ref{fig:thresholding_pipeline} for results.
 \begin{figure}[htbp]
     \centering
     \begin{subfigure}[b]{0.48\textwidth}
@@ -87,29 +72,14 @@ Performing the above steps provides us with a clean image where the rulings are 
     \caption{Comparison of image preprocessing stages: raw grayscale input, noise reduction via Gaussian blur, naive local mean thresholding, and OpenCV Gaussian adaptive thresholding.}
     \label{fig:thresholding_pipeline}
 \end{figure}
-We thus move on to the harder problem of tracing each ruling from start
-to end. Here, given an input image, we would like to output a list of ``lines'' where each line is described by a list of coordinates. This allows us to work with each ruling (geodesic) in isolation for the rest of the project. \\~\\
-Conceptually, the algorithm used to execute this task is as follows: We iterate through each point $p$ in the image, and if we detect a dark pixel, 
-we fix a $1\times n$ rectangle $Q$ (in practice, $2\times 5$ works well) with one corner fixed at $p$.
-This will resemble our velocity vector. We compute
-the mean pixel value of this rectangle. Following this, we rotate $Q$ by a small angle (for example $5$ degrees) repeatedly and measure the mean pixel value each time. We declare the minimum of all these pixel values is
-the direction in which the curve continues, provided that this value is below a fixed threshold. We then let $p$ be the new point that the vector $Q$ points to and continue the process until we see no new points 
-that are below the threshold. \\~\\
-In practice, executing this algorithm naively will result in the program detecting multiple broken curves along each large curve. This issue persists even if we maintain a global \verb|visited| list, and as we
-traverse our curve, add every point between the old pivot and the new point, along the vector, to the list (this is also required to prevent the program from getting stuck in a loop during traversal). \\~\\
-However, this does not suffice since our iteration might hit a midpoint of a curve well before it hits any end points, leading to the program attempting to trace a curve starting from a midpoint. This will give rise to broken
-curves. To fix this, we must add conditions to ensure that the algorithm never starts at a 
-midpoint and a \verb|sweep| variable is introduced to this end. At each point, instead of finding a single, global minimum, we find a few local minimums over various sections of the circle formed by the \verb|sweep| angle.
-So rather than immediately iterating $\theta$ from $0$ to $360$, we first iterate it from $0$ to $\phi$ and find a minimum (if it meets the threshold requirement). We then find yet another minimum in the next sweep 
-of $\phi$ degrees, if it exists, and so on. Now, if we do detect more than one local minimum at the very beginning of the curve tracing, the program must not proceed since this is likely a midpoint of 
-some curve starting elsewhere. This effectively ensures that curves remain unbroken in the case of non-intersecting curves. \\
+The subsequent challenge involves tracing each ruling to output a list of discrete coordinate lines, enabling the isolation of individual geodesics for the remainder of the project. \\~\\
+The tracing algorithm operates as follows: upon detecting a black pixel $p$, a $1\times n$ rectangle $Q$ (typically $2\times 5$) is fixed with one corner at $p$, representing a velocity vector. The algorithm computes the mean pixel value within $Q$, iteratively rotates $Q$ by a small angular increment (e.g., $5$ degrees), and records the mean pixel value at each step. The direction yielding the minimum mean pixel value, provided it falls below a specified threshold, is selected as the continuation of the curve. The opposite end of vector $Q$ becomes the new pivot $p$, and the process repeats until no further points satisfy the threshold condition. \\~\\
+A naive execution of this algorithm often results in fragmented curves. This fragmentation persists even when maintaining a global \verb|visited| list to track traversed coordinates (which is necessary to prevent the program from entering an infinite loop during traversal). \\~\\
+Fragmentation occurs when the iteration intersects the midpoint of a curve prior to identifying its endpoints, leading to the algorithm initiating a trace from the middle of a continuous line. To resolve this, conditions must be added to ensure that the algorithm never starts at a midpoint, and a \verb|sweep| variable is introduced to this end. Rather than finding a single global minimum across a full 360-degree rotation, the algorithm searches for local minima within discrete angular sectors defined by \verb|sweep|. Thus, $\theta$ is first iterated from $0$ to $\phi$ to find a minimum (if it meets the threshold requirement). The search proceeds to the next sector of $\phi$ degrees to find another local minimum, continuing the pattern. If multiple local minima are detected at the initiation of a trace, the coordinate is classified as a midpoint, and the trace is aborted. This ensures curves remain unbroken in non-intersecting geometries. \\
 
-In the actual implementation, the mean was computed every $5$ degrees and added to a list (along with the angle at which this occurred and so on). Evaluating the local minimum was then done using a sliding window 
-(which wraps around) of size $\phi/\theta$ on either side each entry to determine whether it is a local minimum of that window.
+In the implementation, the mean is computed at 5-degree intervals. Local minima are evaluated using a sliding window of size $\phi/\theta$ on either side of each entry to determine whether it is a local minimum within that window.
 
-The above approach is highly effective for most curves that are not closed and do not intersect other curves. However, for the purposes of this project, we will need to add an extra condition
-that cuts a curve off if it develops sharp turns. This is important to ensure that background noise near and outside the edge of the paper that appears like a sharply bent curve is not considered in our
-energy computation (we only want geodesics). Further, if a paper has text or scribbles, we do not want these marks to be detected as rulings.
+The above approach is highly effective for most non-intersecting open curves. However, an additional condition terminates a curve if it exhibits sharp turns. This constraint excludes background noise or extraneous markings (e.g., text) outside the edge of the paper from being misidentified as geodesics.
 \begin{figure}[htbp]
     \centering
     \begin{subfigure}[t]{0.48\textwidth}
@@ -127,29 +97,13 @@ energy computation (we only want geodesics). Further, if a paper has text or scr
     \caption{Tracing results for an isolated curve without the angle cutoff to prevent sharp turns. Overlaid on cleaned image.}
     \label{fig:line_extraction}
 \end{figure}
+
 \section{Fitting Curves using Splines}\label{sec.fit}
-Until now, we have processed the image significantly. We have cleaned up the paper and detected curves individually, as distinct collections of points. But we need to work with the acceleration of a curve, 
-and we would like to find the acceleration at any given point. One approach could be to simply subtract adjacent velocity vectors that are stored simply as straight lines joining a point to the next. This is however a very
-crude approximation and does not give us the acceleration at all points. \\~\\
-To solve this, we fit curves. For simplicity, we will assume that the curve can be described by a function. So the goal is to accurately fit a function $f$ to a dense enough collection of points $[(x_i, y_i)]$.
-Fitting a global function to the entire curve using the least squares approach is impractical since this approach is prone to under fitting and overfitting. But the fit will remain acceptable if we only work in a small
-subset of the full collection of points.
-We can repeat this over multiple small neighborhoods. It is then natural to use partitions of unity to tie these local fit functions into a global function. \\~\\
-To be precise, we will split the domain into overlapping segments, which we will call $U_i$. We may then restrict our dataset to $\{(x_j, y_j)\}_{x_j \in U}$ and fit a function $f_i$ to these points. We repeat this over
-all values of $i$. Then, we find a collection of smooth functions $\rho_i$ that are supported in $U_i$, i.e. $\rho_i(x) = 0$ for all $x \notin U_i$. We additionally ensure that $\sum_{i} \rho_i = 1$ everywhere. The collection
-of functions $(U_i, \rho_i)$ is called a partition of unity subordinate to the {cover} $U_i$ of the domain. Our global function is then $f(x) = \sum \rho_i(x) f_i(x)$. Since each $f_i$ is a local fit, $f(x)$ will resemble 
-the global function and moreover $f$ is guaranteed to be smooth. Note that it suffices to use quadratic functions $f_i$ to fit each local collection of points. \\~\\
-The only issue with this approach is that in order to compute $f'(x)$ and $f''(x)$ (which are needed for the curvature), we will need to know the derivatives of $\rho_i(x)$. Once we know this, the computation is easy
-using the chain rule. If we require $\rho_i$ to be smooth
-in the sense of $C^\infty$, this is unfeasible. However, we can construct partitions of unity such that $\rho_i \in C^k$ while ensuring that the first $k$ derivatives are easy to compute. This is detailed
-\href{https://personal.math.vt.edu/embree/math5466/lecture10.pdf}{here}. \\~\\
-This works if the dataset $\{(x_i, y_i)\}$ represents a function $y = f(x)$. However, this is not always the case, since we may have vertical rulings instead of horizontal rulings. To this end, we construct a time domain
-$T = \{t_i\}$ so that the curve is described by the dataset $\{t_i, x_i, y_i\}$. We may then separately fit two functions $x(t)$ and $y(t)$ to obtain the full parametrization of the curve $\gamma$ in consideration. 
-We also need to take care in choosing our time domain appropriately to ensure that two time intervals of equal elapsed time have approximately the same number of points. If not, we will have bad fits in some 
-intervals and good fits in other intervals. However, we indeed have this for free from our method of tracing curves. We used a fixed length vector to find successive points on the curve so consecutive points
-are equidistant in the plane. It therefore suffices to use total arclength to parametrize our dataset.
-This method thus naturally produces $x(t), y(t)$ along with the first two time derivatives of each function. The curvature is then simply $(x''(t), y''(t))$. Even though we do not have a single closed form representation
-for the entire curve, we can compute $x(t)$ and $y(t)$ and their derivatives at any given point in time $t$. \\~\\
+While the image processing isolates curves as discrete point sets, computing the acceleration at any given point requires an analytic representation. Subtracting adjacent velocity vectors derived from linear interpolation provides a crude approximation that fails to yield smooth acceleration values across all points. \\~\\
+To resolve this, functions are fit to the discrete points $[(x_i, y_i)]$. Fitting a single global polynomial to an entire curve via least squares is impractical, as it is highly susceptible to underfitting and overfitting. However, the fit remains acceptable if restricted to a small subset of the full collection of points. By repeating this over multiple small neighborhoods, partitions of unity can naturally blend these local fit functions into a smooth global representation. \\~\\
+The domain is divided into overlapping segments $U_i$. The dataset is restricted to $\{(x_j, y_j)\}_{x_j \in U_i}$, and a local function $f_i$ (typically quadratic) is fit to these points. A collection of smooth functions $\rho_i$ supported in $U_i$ (where $\rho_i(x) = 0$ for all $x \notin U_i$) is defined such that $\sum_{i} \rho_i = 1$ everywhere. The collection $(U_i, \rho_i)$ constitutes a partition of unity subordinate to the cover $U_i$. The global function is then $f(x) = \sum \rho_i(x) f_i(x)$. Since each $f_i$ is a local fit, $f(x)$ will resemble the global curve while guaranteeing infinite smoothness. \\~\\
+Computing curvature requires the derivatives $f'(x)$ and $f''(x)$, which in turn necessitate the derivatives of $\rho_i(x)$. Once known, the computation is easily evaluated via the chain rule. Requiring $\rho_i$ to be strictly $C^\infty$ is computationally unfeasible; however, partitions of unity can be constructed such that $\rho_i \in C^k$, ensuring the first $k$ derivatives are easily computable. This methodology is detailed \href{https://personal.math.vt.edu/embree/math5466/lecture10.pdf}{here}. \\~\\
+This approach assumes the dataset $\{(x_i, y_i)\}$ represents a standard function $y = f(x)$. Since rulings may be vertical rather than horizontal, a time domain $T = \{t_i\}$ is constructed to parameterize the dataset as $\{t_i, x_i, y_i\}$. Independent functions $x(t)$ and $y(t)$ are fit to obtain a full parameterization of the curve $\gamma$. Care must be taken in choosing the time domain to ensure two intervals of equal elapsed time contain approximately the same number of points, avoiding uneven fit quality. Fortunately, the curve tracing algorithm natively provides this uniformity: because a fixed-length vector was used to find successive points, consecutive points are equidistant in the plane. It therefore suffices to use total arclength to parametrize the dataset. This yields $x(t)$ and $y(t)$ along with their first two time derivatives, defining the curvature as $(x''(t), y''(t))$. Thus, derivatives are analytically computable at any continuous parameter $t$. \\~\\
 \begin{figure}[htpb]
   \centering
   \includegraphics[width=0.5\textwidth]{curve_fit.png}
@@ -157,118 +111,65 @@ for the entire curve, we can compute $x(t)$ and $y(t)$ and their derivatives at 
   \label{fig:curve_fit}
 \end{figure}
 
-Furthermore, this approach generalizes naturally to two dimensions (and even more). If we have a cloud of points $\{(x_i, y_i, z_i)\}$, we divide the domain into overlapping neighborhoods $U_i$ (rectangular neighborhoods 
-for instance), fit the curve using a least squares polynomial fit locally in this neighborhood, and finally use a partition of unity $\rho_i$ subordinate $U_i$ to evaluate the global function (and its derivatives if required)
-at any given point. The approach described in Embree also works in two dimensions. The functions $\rho$ are easy to construct from the functions $\rho_i$ in one dimension. In particular, if $\rho_j$ corresponds to 
-the 1D bump function supported in $I_j$, then we can simply let $U_{jk} = I_j \times I_k$ and let $\rho_{jk} = \rho_j(x)\rho_k(y)$. \\~\\
-In this project, we have used a slightly crude modification of the approach explained above. Rather than beginning with overlapping neighborhoods $U_i$ and fitting functions $f_i$ over all of $U_i$, we
-partition the domain into disjoint intervals of a fixed \verb|bin_size|. Denote these disjoint partitions by $P_i$ and we ensure that $P_i \subset U_i$. Now, we fit a function $f_i$ over the domain $P_i$ instead of $U_i$
-and crudely assume that this provides a valid fit over all of $U_i$. This gives us the required collection of functions $f_i$ along with the partitions $\rho_i$. \\~\\
-See Figure \ref{fig:curve_fit} for a result of the curve fit. In order to interactively view the fit curve with velocity and acceleration vectors displayed pointwise, run \verb|interface.py|. You will be asked
-to crop a region to work with, after which you must click on a curve and hover at a point to on the curve to view the vectors at that point.
-%Furthermore, the implementation uses a neighboring interval to fit if the current interval has too few points, and if every bin has too few points, the method performs a global quadratic fit. This is done in both the
-%1D and 2D methods.
+Furthermore, this local fitting approach generalizes naturally to two dimensions (and higher). For a 3D point cloud $\{(x_i, y_i, z_i)\}$, the domain is divided into overlapping neighborhoods $U_i$ (e.g., rectangular bounds), local least squares polynomials are fit, and a subordinate partition of unity $\rho_i$ evaluates the global function and its derivatives. The 2D functions $\rho$ are easily constructed from the 1D functions $\rho_i$; if $\rho_j$ corresponds to the 1D bump function supported in $I_j$, the 2D formulation is defined as $U_{jk} = I_j \times I_k$ and $\rho_{jk} = \rho_j(x)\rho_k(y)$. \\~\\
+In this project, a modified discrete approach is implemented. Rather than beginning with overlapping neighborhoods $U_i$ and fitting functions $f_i$ over all of $U_i$, the domain is partitioned into disjoint intervals of a fixed \verb|bin_size|. Denoting these disjoint partitions by $P_i$, we ensure that $P_i \subset U_i$. A function $f_i$ is fit over $P_i$ and applied across $U_i$ to generate the collection of functions $f_i$ and partitions $\rho_i$. \\~\\
+See Figure \ref{fig:curve_fit} for a visual result of the curve fit. The interactive visualization of the fitted curves and derivative vectors can be evaluated by executing \verb|interface.py|. The program will request a cropped region, after which clicking on a curve and hovering over a point will display the continuous vectors.
 
-\section{The Core Algorithm}
-In this section we set up and resolve the central part of the problem. First, we understand the scope of the information that taking a picture of a curved piece of paper gives us. \\~\\
-Let $S \subset \R^3$ be the surface that we are taking a picture of and suppose the camera is positioned at $0 \in \R^3$. The camera also has a physical screen given by the flat plane $P = \{(x, y, f) \colon x, y \in \R\}$
-(we assume $S$ lies in the other half space). Here $f$ is the focal length and all images are formed on $P$. The picture $Q$ captured is thus a subset $Q \subset P$ where each point in $Q$
-uniquely corresponds to exactly one point in $S$ (assuming we can see every point in $S$) via scaling. The correspondence also preserves information, i.e. the pixel value at $(x, y, f) \in Q$ exactly equals the light intensity
-at $\lambda(x, y, f) \in S$ where $\lambda$ is the required scaling factor. \\~\\
-So we now have a subset $Q$ of points of the form $(x, y, f)$ and we want to find some way to deform $Q$ so that we recover $S$. We must be careful to ensure that the deformation continues to preserve the correspondence 
-derived from scaling. More precisely, we can state it as follows: we want to find a function $\phi \from Q \to \R^3$ with the constraint $x \in Q \mapsto \lambda_x x$ for some $\lambda_x\neq 0 \in \R$, such that
-$\phi(Q) = S$. A simpler formulation is thus: we want to find $\rho \from Q \to \R$ such that $S_\rho \defeq \{\rho(x) x \colon x \in Q\} = S$. \\~\\
-While the above formulation is mathematically precise, it does not make our work easier since we still do not know anything about $S$. This is where the rulings come in. In 3D space, $S$ is a surface and the rulings are geodesics 
-on $S$. But when we take a picture of $S$, the curves are pointwise transferred to the image $Q$, but these are no longer geodesics on the surface $Q$. To be precise, suppose $\eta$ is a geodesic on $S$ which is parametrized
-by $\eta(t) \from [0, 1] \to S$. For simplicity, we assume that $\eta$ has a constant speed of $1$ 
-(in practice we will have to abandon this assumption to make computations work out) and until explicitly stated, we assume that all curves
-have constant speed $1$.
-The curve $\eta$ has no acceleration outside of the surface's own bending (this is the definition of a geodesic). Thus,
+\section{The Core Algorithm}\label{sec.core}
+This section formalizes the core algorithmic approach. First, we establish the geometric information provided by a two-dimensional photograph of a curved piece of paper. \\~\\
+Let $S \subset \R^3$ denote the target 3D surface, and assume the camera is positioned at the origin $0 \in \R^3$. The camera's image plane is defined as $P = \{(x, y, f) \colon x, y \in \R\}$, where $f$ is the focal length. The captured image $Q \subset P$ contains points that uniquely correspond to points on $S$ via spatial scaling (assuming full visibility of $S$). This projective correspondence preserves information: the pixel intensity at $(x, y, f) \in Q$ exactly equals the light intensity at $\lambda(x, y, f) \in S$, where $\lambda$ is the required scaling factor. \\~\\
+Consequently, the image yields a subset $Q$ of coordinates $(x, y, f)$, and the objective is to determine a deformation of $Q$ that recovers $S$. We must ensure that the deformation continues to preserve the projective correspondence derived from scaling. More precisely, we seek a function $\phi \from Q \to \R^3$ subject to the constraint $\phi(x) = \lambda_x x$ for some $\lambda_x\neq 0 \in \R$, such that $\phi(Q) = S$. Equivalently, the goal is to define a scalar function $\rho \from Q \to \R$ such that the deformed surface $S_\rho \defeq \{\rho(x) x \colon x \in Q\}$ matches $S$. \\~\\
+While this formulation is mathematically precise, it requires additional constraints to recover $S$, as the true surface geometry is unknown. This is where the rulings provide necessary geometric constraints. In 3D space, $S$ is a surface, and the rulings are geodesics on $S$. However, when a picture of $S$ is taken, the curves are pointwise transferred to the image $Q$, yet they are no longer geodesics on the flat image plane. To be precise, let $\eta \from [0, 1] \to S$ parameterize a geodesic on $S$. For simplicity, assume that $\eta$ has a constant speed of $1$ (in practice, this assumption is abandoned to make computations work out), and until explicitly stated, assume all curves have constant speed $1$. The curve $\eta$ has no acceleration outside of the surface's own bending (this is the definition of a geodesic). Thus:
 \[
   \int_0^T \abs{[\ddot \eta(t)]^T}^2 dt = 0
 \]
-On the other hand, if $\gamma(t)$ is the corresponding curve in $Q$, the same integral for $\gamma$ is absolutely not $0$ (we are still assuming that $\gamma$ has constant speed). Here $\ddot \gamma(t)^T$ denotes the projection of the vector $X$ onto the tangent space at the point 
-$\gamma(t)$. The method is thus clear: we will search for $\rho \from Q \to \R$ with the aim of obtaining
+Conversely, for the corresponding projected curve $\gamma(t)$ in $Q$, this integral is strictly non-zero. Here, $\ddot \gamma(t)^T$ denotes the projection of the acceleration vector onto the tangent space at the point $\gamma(t)$. The procedure is therefore established: we search for $\rho \from Q \to \R$ to minimize the tangential acceleration of the lifted curve $\gamma_\rho(t) \defeq \rho(\gamma(t)) \gamma(t)$ on the deformed surface $S_\rho$:
 \[
   E_\gamma[\rho] = \int_0^{T_\rho} \abs{[\ddot \gamma_\rho(t)]^t}^2 dt = \int_0^{T_\rho} \abs{\left[\frac{d^2}{dt^2}(\rho(\gamma(t))\gamma(t))\right]^T}^2 dt = 0
 \]
-Here we use $\rho(\gamma(t)) \gamma(t)$ since this is the exact form of the new curve corresponding to $\gamma$ on the deformed surface $S_\rho$. There could be multiple surfaces different from $S$ that lead to 
-$E_\gamma[\rho] = 0$, but if we do the same with multiple different $\gamma$, we get closer to the true surface. One may point out that four edges of a rectangular piece of paper suffice to uniquely determine 
-the original embedding (up to scaling) and question why the energy approach is needed at all. This is because computing the original embedding requires solving a PDE with boundary conditions 
-derived from the edges, and small (inevitable)
-errors in detecting the boundary may lead to the PDE yielding no solutions or infinitely many solutions. In simple terms, while an exact computation is possible, this approach is unfriendly towards real world errors. 
-The mathematically inclined reader may read more about why the energy functional is a good approach to the problem
-in section \ref{sec.isgood}. \\
+While multiple incorrect surfaces might satisfy $E_\gamma[\rho] = 0$ for a single curve, minimizing this functional across a dense set of different $\gamma$ curves converges on the true surface geometry. While the four edges of a rectangular paper theoretically suffice to uniquely determine the original embedding (up to scaling)—prompting the question of why an energy-based approach is necessary—computing this exact embedding requires solving a PDE with boundary conditions derived from those edges. Small, inevitable observational errors in detecting the boundary can cause the PDE to yield no solutions or infinitely many solutions. In simple terms, while an exact analytical computation is possible, the energy minimization approach is vastly more robust to real-world measurement error. The mathematically inclined reader may refer to Section \ref{sec.isgood} for a deeper justification of the energy functional. \\
 
-To this end we define the geodesic energy as $E \from C^\infty(Q) \to \R$ defined by
-$\rho \mapsto \sum_\gamma E_\gamma[\rho]$. Note that we can safely assume that $\rho$ is smooth since $S$ needs to be smooth. 
-Although we would like $E[\rho] = 0$, this is unachievable in practice. Therefore, the core method used to recover $S$ will be to minimize $E[\rho]$. Gradient descent is therefore apt. \\
+To this end, we define the total geodesic energy functional $E \from C^\infty(Q) \to \R$ as $\rho \mapsto \sum_\gamma E_\gamma[\rho]$. We assume $\rho$ is smooth since $S$ must be smooth. Because strictly achieving $E[\rho] = 0$ is unachievable in practice due to discretization and noise, the core method to recover $S$ relies on minimizing $E[\rho]$ using gradient descent. \\
 
-The rest of the section will focus on computing the energy more explicitly, and consequently we assume some familiarity with differential geometry. For readers more experienced in differential geometry, the tangential 
-acceleration that we want to compute is exactly the geodesic curvature $\kappa_g$ of $\gamma_\rho$, and this is explicitly given by
+The remainder of this section focuses on computing the energy more explicitly, which assumes familiarity with differential geometry. For readers experienced in this field, the tangential acceleration that we want to compute is exactly the geodesic curvature $\kappa_g$ of $\gamma_\rho$, which is explicitly given by the standard formula:
 \[
   \kappa_g = \frac{(N \times \dot\gamma_\rho)\cdot \ddot\gamma_\rho}{\abs{\dot \gamma_\rho}^3}
 \]
-Since the implementation uses curves that do not necessarily have uniform speed, squaring and integrating (after a change of variables) directly gives us an explicit expression for the energy:
-
+Squaring and integrating this term (after applying a change of variables to account for non-uniform speed) directly yields an explicit expression for the energy:
 \[
   E_\gamma[\rho] = \int_0^T \abs{[\ddot \gamma_\rho(t)]^T}^2 dt = \int_0^1\frac{\abs{N(\gamma_\rho(s)) \cdot (\dot \gamma_\rho(s)\times \ddot \gamma_\rho(s))}^2}{\abs{\dot\gamma(s)}^5}ds
 \]
-The normal can be computed using $\rho$ itself as the parametrization and all derivatives are easily evaluated using the chain rule. The details are explained below. \\
+The normal can be computed using $\rho$ itself as the parametrization, and all derivatives are evaluated using the chain rule. The explicit details of this computation are provided below for readers less familiar with these derivations. \\
 
-We will assume that we may compute the derivatives of $\rho$ and the derivatives of $\gamma$. We have already seen that we can accurately compute
-the derivatives of $\gamma$ with respect to $t$, and computing the derivatives of $\rho$ with respect to $x$ and $y$ can be done similarly --- more on this later. We may then use the chain rule to compute $\rho'(t)$ 
-and $\rho''(t)$ which then directly gives us $\ddot \gamma_\rho(t)$. 
-We are only left to compute $\ddot \gamma(t)^T = X(p)^T$, where $p = \gamma_\rho(t)$, and refactor speed into the equations. \\~\\
-Fix a point $p \in S_\rho$ and suppose that $X$ is a vector in $\R^3$ with basepoint $p$. The vector $X$ decomposes as $X = X^T + (X\cdot N) N$ where $N$ is the normal vector at $p$. So we need to compute the normal $N(p)$
-of $S_\rho$. This can be done using standard differential geometry. To do so, we construct a parametrization for $S_\rho$ around $p$ defined by $\varphi(x, y) \defeq \rho(x, y, f) (x, y, f) \in S_\rho$.
-Note that when $p = \gamma_\rho(t)$, $(x_0, y_0, f) = \gamma(t)$. 
-The tangent plane $T_p S_\rho$ 
-is thus given by $\spann\{\del_x \varphi (p), \del_y \varphi(p)\}$. The normal $N(\gamma_\rho(t))$ is therefore
+Assuming the derivatives of $\gamma$ with respect to $t$ are accurately computed (as established in Section \ref{sec.fit}), the derivatives of $\rho$ with respect to $x$ and $y$ can be computed similarly. Applying the chain rule to compute $\rho'(t)$ and $\rho''(t)$ directly yields $\ddot \gamma_\rho(t)$. We must then compute the tangential projection $\ddot \gamma(t)^T = X(p)^T$, where $p = \gamma_\rho(t)$, and factor the arbitrary speed into the equations. \\~\\
+Fix a point $p \in S_\rho$ and suppose that $X$ is a vector in $\R^3$ with basepoint $p$. The vector $X$ decomposes orthogonally as $X = X^T + (X\cdot N) N$, where $N$ is the normal vector at $p$. Thus, computing the normal $N(p)$ of $S_\rho$ is required. This is achieved by constructing a parametrization for $S_\rho$ around $p$ defined by $\varphi(x, y) \defeq \rho(x, y, f) (x, y, f) \in S_\rho$. Note that when $p = \gamma_\rho(t)$, the coordinates map to $(x_0, y_0, f) = \gamma(t)$. 
+The tangent plane $T_p S_\rho$ is spanned by $\{\del_x \varphi (p), \del_y \varphi(p)\}$. The normal $N(\gamma_\rho(t))$ is therefore:
 \[
-  N(\gamma_\rho(t)) = \frac{\del_x \varphi(x_0, y_0) \times \del_y \varphi(x_0, y_0)}{\norm{\del_x \varphi(x_0, y_0) \times \del_y \varphi(x_0, y_0)}}
+  N(\gamma_\rho(s)) = \frac{\del_x \varphi(x_0, y_0) \times \del_y \varphi(x_0, y_0)}{\norm{\del_x \varphi(x_0, y_0) \times \del_y \varphi(x_0, y_0)}}
 \]
-where $(x_0, y_0, f) = \gamma(t)$. It is clear that
+where $(x_0, y_0, f) = \gamma(s)$. The partial derivatives are computed via the product rule:
 \[
   \del_x \varphi(x_0, y_0) = (\del_x \rho(x_0, y_0) x_0 + \rho(x_0, y_0), \del_x \rho(x_0, y_0) y_0, \del_x \rho(x_0, y_0)f)
 \]
-using the product rule. 
-Now, since the speed is not necessarily constant, we will have
-to take a further cross product with the velocity vector $\dot \gamma_\rho(t)$ to ensure that any nonzero tangential acceleration remains strictly along the direction of the curve (speeding up or slowing down only).
-Taking this into account, we in fact have $\ddot \gamma_\rho(t)^T = N(\gamma_\rho(t)) \cdot (\dot \gamma_\rho(t)\times \ddot \gamma_\rho(t))$. The rest of the calculations will depend on $\rho$ and $\gamma$ specifically, 
-and is detailed in the \verb|evaluate_penalties| method of \verb|detector/energy.py|. \\~\\
-Finally, since in practice $\gamma(s)$ is defined in terms of an arbitrary parameter $s$ (ranging from $0$ to $1$ in our case),
-rather than its arclength (which will be denoted $dt$ as before), we need to make the change of variables $dt = \abs {\dot \gamma_\rho(t)}ds$,
-we have 
+Because the parameterization speed is not necessarily constant, a further cross product with the velocity vector $\dot \gamma_\rho(t)$ must be taken to ensure that any nonzero tangential acceleration remains strictly aligned with the direction of the curve (representing scalar speeding up or slowing down). Accounting for this, we have $\ddot \gamma_\rho(t)^T = N(\gamma_\rho(t)) \cdot (\dot \gamma_\rho(t)\times \ddot \gamma_\rho(t))$. The remainder of the calculations depend explicitly on $\rho$ and $\gamma$, detailed in the \verb|evaluate_penalties| method of \verb|detector/energy.py|. \\~\\
+Finally, because $\gamma(s)$ is parameterized by an arbitrary variable $s \in [0, 1]$ rather than its true arclength parameter $t$, the change of variables $dt = \abs {\dot \gamma_\rho(t)}ds$ is applied, yielding:
 \[
   E_\gamma[\rho] = \int_0^T \abs{[\ddot \gamma_\rho(t)]^T}^2 dt = \int_0^1\frac{\abs{N(\gamma_\rho(s)) \cdot (\dot \gamma_\rho(s)\times \ddot \gamma_\rho(s))}^2}{\abs{\dot\gamma(s)}^5}ds
 \]
-This is because differentiating $\gamma_\rho(s)$ with respect to $s$ each time introduces a factor of $1/\abs{\dot \gamma_\rho(s)}$ exactly once. We are differentiating three times in the numerator and squaring
-which gives a factor of $\abs{\dot \gamma_\rho(s)}^{-6}$ and we finally multiply by $\abs{\dot \gamma_\rho(s)}$ due to change of variables to obtain a factor $\abs{\dot \gamma(s)}^{-5}$. \\~\\
-Other than the core geodesic energy computed above, the method \verb|evaluate_penalties| consists of many other penalties, which have currently been set to $0$, such as a penalty for high mean and Gaussian curvatures, 
-a penalty on high arclength variance of geodesics and so on. The results can be fine tuned using these parameters, although we will stick to the geodesic energy for the most part.
+Differentiating $\gamma_\rho(s)$ with respect to $s$ introduces a factor of $1/\abs{\dot \gamma_\rho(s)}$ at each step. Differentiating three times in the numerator and squaring contributes a factor of $\abs{\dot \gamma_\rho(s)}^{-6}$, which, when multiplied by $\abs{\dot \gamma_\rho(s)}$ from the change of variables, results in the final $\abs{\dot \gamma(s)}^{-5}$ scaling term. \\~\\
+In addition to the core geodesic energy computed above, the \verb|evaluate_penalties| method includes optional penalization parameters for high mean/Gaussian curvature and arclength variance. These are currently set to $0$ but can be fine-tuned to constrain the geometry, though the implementation primarily relies on the geodesic energy.
 
-\section{Gradient Descent}
-The final part of the algorithm is to use gradient descent to find a minimizer $\rho$ for $E$. Typically, gradient descent is used to minimize functions $f \from \R^N \to \R$ over finite dimensional spaces. We however
-have a functional over $C^\infty(Q)$. The simplest fix is to approximate. We sample the domain $Q$ across a uniform and discrete collection of points $D = \{(u_i, v_i)\colon i = 1, 2, \dots, N\}$.
-The function $\rho$ is thus represented by a finite tuple $\vect x \in \R^N$ where $x_i = \rho(u_i, v_i)$. Therefore $E \from \R^N \to \R$. \\~\\
+\section{Gradient Descent}\label{sec.gd}
+The final stage of the algorithm utilizes gradient descent to find a minimizer $\rho$ for the functional $E$. While gradient descent is standard for functions $f \from \R^N \to \R$ over finite-dimensional spaces, the energy functional operates over the infinite-dimensional space $C^\infty(Q)$. The practical resolution is discrete approximation. The domain $Q$ is sampled across a uniform grid $D = \{(u_i, v_i)\colon i = 1, 2, \dots, N\}$. The continuous function $\rho$ is represented by a finite vector $\vect x \in \R^N$ where $x_i = \rho(u_i, v_i)$, effectively reducing the objective to $E \from \R^N \to \R$. \\~\\
 The gradient descent algorithm proceeds as follows:
 \begin{itemize}
-  \item We first start with an initial tuple $\vect x_0 = (1, 1, \dots, 1)$. This is the discrete representation of the function $\rho(x, y, f) = 1 \forall (x, y, f) \in Q$.
-  \item We fit a smooth surface (a function of $u$ and $v$) to the collection of points $(u_i, v_i, x_i)$ using a global quadratic function of $u$ and $v$. This method additionally returns the derivatives of the surface
-    $\rho_u$, $\rho_v$, $\rho_{uv}$, $\rho_{uu}$ and $\rho_{vv}$. To achieve this, we use the method described in section \ref{sec.fit} with a large enough \verb|bin_size| to obtain a global fit. See section \ref{sec.lim}
-    for why a global fit is used instead of bump functions.
-  \item We iterate through the detected curves and compute $E_\gamma[\rho]$ using the surface fit $\rho$ and its derivatives.
-  \item The total energy is simply the sum of these energies obtained. We use autodifferentiation to compute $\grad E(\vect x)$.
+  \item Initialize $\vect x_0 = (1, 1, \dots, 1)$, corresponding to the discrete representation of a flat plane $\rho(x, y, f) = 1$ for all $(x, y, f) \in Q$.
+  \item Fit a smooth global quadratic surface to the coordinates $(u_i, v_i, x_i)$ to estimate continuous partial derivatives $\rho_u$, $\rho_v$, $\rho_{uv}$, $\rho_{uu}$, and $\rho_{vv}$. This utilizes the methodology from Section \ref{sec.fit} with a sufficiently large \verb|bin_size| to obtain a global fit. See Section \ref{sec.lim} for an explanation of why a global fit is necessary instead of localized bump functions.
+  \item Iterate through the detected curves and compute $E_\gamma[\rho]$ using the fitted surface $\rho$ and its analytic derivatives.
+  \item Sum the individual curve energies to obtain the total energy and compute the gradient $\grad E(\vect x)$ via automatic differentiation.
 \end{itemize}
-We elaborate on the last step. Backwards autodifferentiation allows us to compute the derivatives of any function defined algorithmically. In our case, the input is $\vect x$ and our function $E(\vect x)$ involves
-not just performing the integration but also fitting the surface to $\rho$ to $\vect x$. In our implementation, we used PyTorch to perform autodifferentiation. Finally we use the usual
-gradient descent algorithm
-$\vect x_{n+1} = \vect x_n - \eta_n\grad E(\vect x_n)$ to find a function $\rho$ (approximated by $\vect x_{n+1}$) that better minimizes the energy (as compared to $\vect x_n$). The iteration is stopped after
-a fixed number of steps is completed, or is stopped early if the gradient falls below $0.5$ (this is set in \verb|test_gd.py| and the cutoff can be changed). \\~\\
-In particular, the last method is known as Vanilla gradient descent. This is implemented in \verb|detector/gradient_descent.py| by the method \verb|run_vanilla_descent|. While this shows good results, another 
-form of gradient descent used interchangeably in the project is gradient descent with momentum. This is implemented by \verb|run_adam_descent| using PyTorch's Adam descent method. 
-This method includes a momentum term to speed up convergence. \\
+Reverse-mode automatic differentiation allows for the computation of derivatives for any algorithmically defined function. In this implementation, the input is $\vect x$ and the function $E(\vect x)$ encompasses both the numerical integration and the surface fitting operations. PyTorch is utilized to perform this autodifferentiation. The discrete surface is iteratively updated via standard gradient descent: $\vect x_{n+1} = \vect x_n - \eta_n\grad E(\vect x_n)$. The iteration terminates after a fixed number of steps or when the gradient magnitude falls below a specified threshold (configured in \verb|test_gd.py|). \\~\\
+The standard approach is implemented in \verb|detector/gradient_descent.py| via \verb|run_vanilla_descent|. Additionally, gradient descent with momentum is supported via \verb|run_adam_descent|, leveraging PyTorch's Adam optimizer to accelerate convergence. \\
 
 \begin{figure}[htbp]
     \centering
@@ -284,64 +185,31 @@ This method includes a momentum term to speed up convergence. \\
         \caption{Concave deformation (surface curving away from camera).}
         \label{fig:downcurve}
     \end{subfigure}
-    \caption{3D surface reconstruction results via energy minimization over extracted rulings, using Adam gradient descent. Left panels show original picture,
-    while right panels show the reconstructed 3D surface alongside their final minimized energies. Note: there is an option to display detected curves. This was deselected.}
+    \caption{3D surface reconstruction results via energy minimization over extracted rulings, using Adam gradient descent. Left panels show original image,
+    while right panels show the reconstructed 3D surface alongside their final minimized energies. (Curve overlay display was disabled for this run.)}
     \label{fig:reconstruction_results}
 \end{figure}
-The interested reader may view the interactive 3D plot generated by running \verb|test_gd.py|. The program will open a window where you may crop the image (it is recommended that the borders be cropped out). Once this is done, 
-a window will display all geodesics it detected. If you see a curve that has unusually high energy or does not look like a geodesic, you may deselect it by clicking so as to exclude it from the minimization process. Some 
-results are attached in Figure \ref{fig:reconstruction_results}.
+Executing \verb|test_gd.py| generates an interactive 3D plot corresponding to Figure \ref{fig:reconstruction_results}, allowing for boundary cropping and manual exclusion of curves exhibiting anomalous high-energy profiles prior to minimization.
 \newpage
 
 \section{Why Energy is a Good Metric}\label{sec.isgood}
-A natural question that may come up is why computing the energy is necessary in the case of a piece of paper which has zero Gaussian curvature everywhere. Indeed, if we assume that the paper is 
-developable (has 0 Gaussian curvature everywhere) and is bounded by geodesics (for example
-if the paper is a rectangle or any other polygon), the problem is trivial. Any disturbance on the paper necessarily propagates to at least one boundary since the Gaussian curvature is $0$. We can thus use just information 
-from the boundary to uniquely construct the surface, leaving nothing to chance. Note that `unique' in this context refers to uniqueness up to globally scaling the whole surface (homothety). We will use `unique' to 
-describe uniqueness up to scaling throughout this section. \\~\\
-On the other hand, in the case when the boundary is not formed by geodesics, it is impossible to determine the full shape of the paper given finitely many geodesics. This is because in this case there ``outermost'' geodesics
-and no information related to curvature is known outside of these. We will thus need a dense collection of horizontal geodesics and a dense collection of vertical geodesics to uniquely determine the original surface $S$.\\~\\
-The same holds generally even when $S$ is not developable, i.e. a dense collection of geodesics along both directions is necessary and sufficient to uniquely determine the surface in general. \\~\\
-If $K = 0$ eveywhere, we in fact have a PDE that describes $\rho$ (and hence the surface).
-If the boundary of the paper is known to be made of geodesics, we will obtain a unique solution for this PDE upon imposing the boundary conditions. The PDE can be explicitly derived using Cartan's equations using the condition
-$K = 0$, but we omit it.\\~\\
-Thus, in the case where we have a rectangular piece of paper, the problem is uniquely solved by the above PDE upon establishing the boundary conditions that the boundary is made of geodesics. However, PDEs are highly sensitive to 
-small changes and slight errors in computation can lead to an invalid result. The energy minimizing approach is thus more stable and accurate subject to real world error. It also generalizes easily to non-developable surfaces
-with generic boundary given enough rulings. In particular, the energy functional $E[\rho] = \sum_\gamma E_\gamma[\rho]$ is an approximation of the function
+A natural question is why computing the energy is necessary for a developable surface (such as a piece of paper) that has zero Gaussian curvature everywhere. If the paper is bounded by geodesics (e.g., a perfect rectangle), the problem is trivial. Any geometric disturbance on a developable surface necessarily propagates to at least one boundary. Therefore, information from the boundaries is theoretically sufficient to uniquely construct the surface (up to a global scaling factor, or homothety). The governing PDE can be explicitly derived using Cartan's equations under the constraint $K = 0$. \\~\\
+However, if the boundary does not consist of geodesics, boundary data is fundamentally insufficient. Without "outermost" geodesics, curvature information cannot be definitively extrapolated inward. A dense collection of interior horizontal and vertical geodesics is therefore required to uniquely determine the original surface embedding $S$. This requirement extends fully to general non-developable surfaces.\\~\\
+Furthermore, PDEs exhibit extreme sensitivity to boundary detection errors. Minor computational inaccuracies can cause the system to become overdetermined or yield non-physical solutions. The energy minimization framework provides a variationally robust alternative that tolerates real-world observational noise. The discrete energy functional $E[\rho] = \sum_\gamma E_\gamma[\rho]$ approximates the continuous integral over the manifold of directional geodesics $G$:
 \[
   E = \int_{G_{\text{vert}} \cup G_{\text{hor}}}\int_0^{T} \abs{\ddot \gamma_\rho(t)^T}^2 dt d\gamma_\rho
 \]
-where $G$ denotes the collection of geodesics (with subscript specifying direction). If minimized to $0$, this functional will uniquely reproduce the original surface.
+When minimized, this functional reliably reproduces the original surface geometry across both developable and non-developable embeddings.
 
 \section{Limitations}\label{sec.lim}
-In this section, we list some known limitations of the current implementation along with specific algorithms that may resolve these issues. \\~\\
-The first limitation relates to the fact that we approximate $\rho$ with a discrete set of points $\vect x_0$. We can choose $N$ large enough that $\vect x_0$ provides a good approximation for $\rho$. However, when we
-compute the gradient $\grad E(\vect x_0)$, this yields a completely different list of points $\vect x_1$. There is no mathematical guarantee that $\vect x_1$ approximates a smooth function and when $(u_i, v_i, x_i)$ is plotted
-using values from $\vect x_1$, we could have arbitrary jumps and discontinuities. This is precisely the reason we use global quadratic fits in our gradient descent rather than using bump functions as described in 
-section \ref{sec.fit}. When bump functions and local quadratic fits are used to fit a discrete collection of points that has arbitrary discontinuities, we will end up with a bumpy function that is far from 
-the true direction of quickest descent. Successive iterations worsen accuracy and lead to the program producing an arbitrary surface as output. \\~\\
-In our implementation, the code contains both methods. The \verb|surface_fit| function attempts to fit a surface using bump functions, but reverts to a global quadratic fit if too few points are found in every locality (bin). 
-By setting the \verb|bin_size| to either a low value or a high value, we may force the function to return a global quadratic fit, which works better for our purpose. Passing a high enough \verb|bin_size| will lead to 
-a single global bin so that the fit is global and passing a low enough $\verb|bin_size|$ leads to the method falling back onto a global fit due to a lack of data points in every bin. 
-Despite this, a global quadratic fit may be inaccurate, since
-this provides a rather crude approximation for $\vect x_1$. \\~\\
-A possible way to overcome this inaccuracy is to apply a Gaussian blur filter on the collection $\{(u_i, v_i, x_i)\}$ where $\vect x_1 = (x_i)$ and follow this up with a more rigorous surface fit such as using bump functions. 
-One can expect this to work better, although this has not been tested. The problem of inaccuracy is reduced but still persists with this method. \\~\\
-The better method would be to get rid of approximations using finite dimensional vectors all together and proceed using mathematical methods related to gradient descent on Sobolev spaces. We outline this method below. \\~\\
-Rather than approximate $\rho$ by a vector, we would like to directly perform gradient descent on $E$ as a function acting on $C^\infty(Q)$. We need to compute the gradient $\grad E(\rho)$ at any given $\rho$. We make
-the notion of gradient precise. In particular, we must define the gradient in a way that $\grad E(\rho)$ is a $C^k$ function which captures information about $DE_\rho$, which is the usual Fr\'echet derivative.
-The most natural way to do so is to 
-choose a Hilbert space $\cal H$ and define $\grad E(\rho)$ to be the function in $\cal H$ such that $\gen{\grad E(\rho), h}_{\cal H} = DE_\rho (h)$ for all $h \in \cal D$. If $\cal H$ is a Hilbert space, the Riesz representation
-theorem applies and a function satisfying this is guaranteed to exist. \\
+A primary limitation of the current implementation stems from the discrete approximation of $\rho$ via the vector $\vect x_0$. While $N$ can be selected to accurately approximate a smooth function, the gradient step $\grad E(\vect x_0)$ yields an updated vector $\vect x_1$ that lacks mathematical guarantees of smoothness. Visualizing the discrete points $(u_i, v_i, x_i)$ mapped from $\vect x_1$ frequently reveals arbitrary jumps and discontinuities. \\~\\
+This is precisely why global quadratic fits are employed during gradient descent rather than local bump functions (as detailed in Section \ref{sec.fit}). Applying local fits to discontinuous discrete coordinate sets generates highly irregular, "bumpy" functions that diverge significantly from the true direction of steepest descent. Iterating on these discontinuous intermediate states degrades accuracy and ultimately produces arbitrary surface geometries. \\~\\
+The \verb|surface_fit| function conditionally utilizes bump functions but falls back to a global quadratic fit if insufficient points are found in a local bin. By setting \verb|bin_size| to a sufficiently large value, the function is forced into a stabilizing global quadratic fit. Despite providing stability, this fit remains a low-order, crude approximation of $\vect x_1$. \\~\\
+Applying a Gaussian blur to the set $\{(u_i, v_i, x_i)\}$ prior to surface fitting could theoretically mitigate localized discontinuities, though this approach has not been rigorously tested and remains constrained by the finite-dimensional approximation. \\~\\
+A mathematically rigorous resolution requires formulating the gradient descent directly within a Sobolev space rather than $\R^N$. Instead of vector approximation, gradient descent should act on $E$ as a functional over $C^\infty(Q)$. The gradient $\grad E(\rho)$ must be defined as a $C^k$ function characterizing the Fr\'echet derivative $DE_\rho$. By selecting a Hilbert space $\cal H$, the Riesz representation theorem guarantees the existence of a gradient satisfying $\gen{\grad E(\rho), h}_{\cal H} = DE_\rho (h)$ for all test functions $h \in \cal D$. \\
 
-For instance, if we choose $\cal H = L^2(Q^\circ)$,  then the gradient is $f \in L^2$, where $\gen{f, h}_{L^2} = DE_\rho h$. 
-But once again, this only guarantees that the gradient is in $L^2$, which could be far
-from smooth. So we instead use the Sobolev space $\cal H = H^m = W^{m, 2}(Q^\circ)$, which we know embeds into $C^k$ when $m-n/2 > k$. Moreover, this choice is valid since $H^m$ is a Hilbert space.
-We thus perform gradient descent via the iterative algorithm
-$\rho_{n+1} = \rho_n - \eta_n f_n$ where $f_n \in H^m$ such that $\gen{f_n, h}_{H^m} = DE_{\rho_n}(h)$ for all $h \in C^\infty(Q)$. 
-This method has not been implemented yet, but seems like it would be apt for our case. \\
+Using $\cal H = L^2(Q^\circ)$ guarantees an $L^2$ gradient, which may still lack necessary smoothness. Employing the Sobolev space $\cal H = H^m = W^{m, 2}(Q^\circ)$ ensures continuous embeddings into $C^k$ when $m - n/2 > k$. Because $H^m$ is a valid Hilbert space, the iterative algorithm proceeds robustly as $\rho_{n+1} = \rho_n - \eta_n f_n$, where $f_n \in H^m$ satisfies $\gen{f_n, h}_{H^m} = DE_{\rho_n}(h)$ for all $h \in C^\infty(Q)$. \\
 
-The next goal is thus to implement this fix. Further, the boundaries of the paper are currently not detected well. I aim to fix this issue and finally use this information to unroll the paper into a flat sheet and return 
-its relative dimensions.
+Future development priorities include the implementation of this Sobolev gradient descent and the refinement of boundary detection to facilitate accurate surface unrolling and dimension extraction.
 
 \end{document}
