@@ -49,8 +49,8 @@ def paper_clean_fast(img):
     new_img = np.full(img.shape, 255, dtype=np.uint8)
 
     # 6. Apply your exact conditional logic vector-wide using boolean masks
-    dark_mask = pixel_brightness < (local_brightness - local_std)
-    bright_mask = pixel_brightness > (local_brightness + local_std)
+    dark_mask = pixel_brightness < (local_brightness - 15)
+    bright_mask = pixel_brightness > (local_brightness + 15)
 
     new_img[dark_mask] = 0
     new_img[bright_mask] = 255

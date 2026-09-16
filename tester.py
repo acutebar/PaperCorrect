@@ -3,18 +3,20 @@ import cv2 as cv
 import numpy as np
 import matplotlib.pyplot as plt
 
-img = cv.imread("curve.jpeg")
+img = cv.imread("guitar.jpeg")
 gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
 x_lim,y_lim = gray_img.shape
 
 blurred_img = cv.GaussianBlur(gray_img, (5, 5), 0)
+#blurred_img = gray_img
 cleaned_img = cv.adaptiveThreshold(
     blurred_img, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 15
 )
 
 plt.imshow(gray_img, cmap='gray')
-plt.savefig("gray_img.png", dpi=300, bbox_inches='tight')
+plt.show()
+#plt.savefig("gray_img.png", dpi=300, bbox_inches='tight')
 plt.imshow(blurred_img, cmap='gray')
 #plt.savefig("gaussian_blur.png", dpi=300, bbox_inches='tight')
 plt.show()
@@ -25,7 +27,8 @@ plt.show()
 
 my_cleaned_img = detector.paper_clean_fast(blurred_img)
 plt.imshow(my_cleaned_img, cmap='gray')
-#plt.savefig("simple_clean.png",dpi=300, bbox_inches='tight')
+plt.title("Unweighted mean comparison")
+#plt.savefig("simple_clean_nostd.png",dpi=300, bbox_inches='tight')
 plt.show()
 
 
