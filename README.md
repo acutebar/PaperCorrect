@@ -1,5 +1,10 @@
 # 3D Surface Reconstruction using Geodesic Energy Minimization
 [**Read the full writeup (PDF) here.**](../../releases/latest/download/report.pdf)
+## Some Results
+
+| ![](assets/updemo.gif) | ![](assets/downdemo.gif) |
+| ---------------------- | ------------------------ |
+
 
 ## The Core Algorithm
 
