@@ -32,9 +32,12 @@ Click a picture of a ruled piece of paper and move the `.jpeg` file to the same 
 ```bash
 python3 interface.py
 ```
+![](assets/interfacedemo.gif)
 
 To view interactive 3D reconstruction plot, run:
 ```bash
 python3 test_gd.py
 ```
+![](assets/fulldemo.gif)
+
 
