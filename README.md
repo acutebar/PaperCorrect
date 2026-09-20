@@ -1,4 +1,6 @@
 # 3D Surface Reconstruction using Geodesic Energy Minimization
+## Full writeup
+[**Read the full writeup (PDF)**](../../releases/latest/download/report.pdf)
 This projects uses a single photograph to reconstruct the 3D embedding of a surface with known geodesics (e.g., a ruled piece of paper which is deformed). The algorithm follows an energy minimization process on the net *geodesic energy*. 
 
 On the highest level, the algorithm begins by *guessing* that the original surface is simply flat. If the guess turns out inaccurate, the guess is deformed in certain ways to attempt to match the true surface. 
@@ -34,5 +36,3 @@ To view interactive 3D reconstruction plot, run:
 python test_gd.py
 ```
 
-## Full writeup
-[**Read the full writeup (PDF)**](../../releases/latest/download/report.pdf)
