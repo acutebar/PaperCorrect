@@ -184,7 +184,7 @@ def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, step
 
                 ax.clear()
                 
-                #ax.plot_surface(px, py, pz, cmap='viridis', edgecolor='none', alpha=0.9)
+                ax.plot_surface(px, py, pz, cmap='viridis', edgecolor='none', alpha=0.9)
                 ax.plot_surface(qx, qy, qz, cmap='gray', edgecolor='none', alpha=0.9)
 
 

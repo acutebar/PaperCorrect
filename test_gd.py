@@ -316,7 +316,7 @@ class PaperCorrectApp:
                 self.toggleable_lines.append(ln3)
         
         ax_check = fig.add_axes([0.02, 0.5, 0.12, 0.15])
-        self.check_buttons = CheckButtons(ax_check, ['Texture', 'Lines'], [True, False])
+        self.check_buttons = CheckButtons(ax_check, ['Texture', 'Lines'], [True, True])
         
         def ui_toggle(label):
             if label == 'Texture':
