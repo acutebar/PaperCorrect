@@ -35,6 +35,6 @@ python3 interface.py
 
 To view interactive 3D reconstruction plot, run:
 ```bash
-python test_gd.py
+python3 test_gd.py
 ```
 
