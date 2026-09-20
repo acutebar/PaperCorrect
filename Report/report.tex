@@ -142,7 +142,7 @@ We divide the domain into overlapping segments $U_i$ and restrict the dataset to
 \emph{bump} functions $\rho_i$ supported in $U_i$ (i.e., $\rho_i(x) = 0$ for all $x \notin U_i$) such that $\sum_{i} \rho_i = 1$ everywhere. The collection $(U_i, \rho_i)$ constitutes a partition of unity subordinate to the cover $U_i$. The global function is then defined as $f(x) = \sum \rho_i(x) f_i(x)$. Since each $f_i$ is a local fit, $f(x)$ will resemble the global curve while guaranteeing infinite smoothness. \\
 
 Computing curvature requires the derivatives $f'(x)$ and $f''(x)$, which in turn necessitate the derivatives of $\rho_i(x)$. Once known, the computation is easily evaluated via the chain rule. 
-Requiring $\rho_i$ to be strictly $C^\infty$ is computationally unfeasible, since the derivatives are complicated; however, partitions of unity can be constructed such that $\rho_i \in C^k$, ensuring the first
+Requiring $\rho_i$ to be strictly $C^\infty$ is computationally unfeasible, since the derivatives are complicated; however, partitions of unity can be constructed such that $\rho_i \in C^k$ instead, ensuring the first
 $k$ derivatives are easily computable. This methodology is detailed \href{https://personal.math.vt.edu/embree/math5466/lecture10.pdf}{here}, and we provide an overview of the construction below. \\
 
 In this method, the $C^k$ bump function $\rho_{j,k}$ on an interval $I_j = [x_j, x_{j+1})$ is defined inductively using various lower order bump functions on adjacent intervals.
@@ -151,7 +151,7 @@ $\rho_{j, 0} \defeq \chi_{I_j}$ to be the usual characteristic function that is 
 \[
   \rho_{j, k}(x) \defeq \left(\frac{x - x_j}{x_{j+k}-x_j}\right)\rho_{j, k-1}(x) + \left(\frac{x_{j+k+1} - x}{x_{j+k+1} - x_{j+1}}\right)\rho_{j+1, k-1}(x)
 \]
-It turns out that $\rho_{j, k} \in C^k(\R)$ and has support contained in $U_{j,k} = [x_j, x_{j+k})$. Moreover, the derivatives of $\rho_{j,k}$ are easily computed analytically. 
+It turns out that $\rho_{j, k} \in C^k(\R)$ and has support contained in $U_{j,k} = [x_j, x_{j+k+1})$. Moreover, the derivatives of $\rho_{j,k}$ are easily computed analytically. 
 The collection $(U_{j,k}, \rho_{j, k})$ can then be used as a partition of unity, which 
 along with local quadratic fits $f_j$ over $U_{j,k}$, generates a global $C^k$ approximation of the initial dataset, whose derivatives are easily computed. \\
 
@@ -172,7 +172,7 @@ Furthermore, this local fitting approach generalizes naturally to two dimensions
 fit local polynomials $z=f_i(x, y)$ using the local least squares polynomial fit method. We then construct a partition of unity $\rho_i$ subordinate to the cover $U_i$ to obtain the global function $f = \sum f_i \rho_i$.
 In particular, we construct a partition $P_{jk}$ of the domain by defining $P_{jk} = I_j \times I_k$ and define the overlapping neighborhoods $U_{jk}$ by:
 \[
-  U_{jk, K} \defeq \bigcup_{i=0}^{i=K}P_{(j+i) (k+i)}
+  U_{jk, K} \defeq \bigcup_{a,b=0}^{i=K}P_{(j+a) (k+b)}
 \]
 where $K$ is the desired order of smoothness. The 2D functions $\rho$ subordinate to $U_{jk, K}$ are easily constructed from the 1D functions $\rho_{i, K}$; if $\rho_{j,K}$
 corresponds to the 1D $C^K$ bump function supported in $I_j$, we define $\rho_{jk, K}(x, y) = \rho_{j,K}(x)\rho_{k,K}(y)$. \\
@@ -196,7 +196,7 @@ While this formulation is mathematically precise, we need additional constraints
 \]
 On the contrary, for the corresponding projected curve $\gamma(t)$ in $Q$, this integral may be far from $0$. Here, $\ddot \gamma(t)^T$ denotes the projection of the acceleration vector onto the tangent space at the point $\gamma(t)$. The procedure is therefore established: we search for $\rho \from Q \to \R$ to minimize the tangential acceleration of the lifted curve $\gamma_\rho(t) \defeq \rho(\gamma(t)) \gamma(t)$ on the deformed surface $S_\rho$:
 \[
-  E_\gamma[\rho] = \int_0^{T_\rho} \abs{[\ddot \gamma_\rho(t)]^t}^2 dt = \int_0^{T_\rho} \abs{\left[\frac{d^2}{dt^2}(\rho(\gamma(t))\gamma(t))\right]^T}^2 dt = 0
+  E_\gamma[\rho] = \int_0^{T_\rho} \abs{[\ddot \gamma_\rho(t)]^T}^2 dt = \int_0^{T_\rho} \abs{\left[\frac{d^2}{dt^2}(\rho(\gamma(t))\gamma(t))\right]^T}^2 dt = 0
 \]
 While multiple incorrect surfaces might satisfy $E_\gamma[\rho] = 0$ for a single curve, minimizing this functional across a dense set of different $\gamma$ curves converges on the true surface geometry. In theory, the four edges of a rectangular paper suffice to uniquely determine the original embedding (up to scaling), prompting the question of why an energy-based approach is necessary. Computing this exact embedding requires solving a PDE with boundary conditions derived from those edges. Small, inevitable observational errors in detecting the boundary can cause the PDE to yield no solutions or infinitely many solutions. In simple terms, while an exact analytical computation is possible, the energy minimization approach is vastly more robust to real-world measurement error. The mathematically inclined reader may refer to Section \ref{sec.isgood} for a deeper justification of the energy functional. \\
 
@@ -224,7 +224,7 @@ where $(x_0, y_0, f) = \gamma(t)$. The partial derivatives are then computed via
 \[
   \del_x \varphi(x_0, y_0) = (\del_x \rho(x_0, y_0) x_0 + \rho(x_0, y_0), \del_x \rho(x_0, y_0) y_0, \del_x \rho(x_0, y_0)f)
 \]
-Since the parameterization speed is not necessarily constant, we must take a further cross product with the velocity vector $\dot \gamma_\rho(t)$ to ensure that any nonzero tangential acceleration remains strictly aligned with the direction of the curve (representing scalar speeding up or slowing down). Accounting for this, we have $\ddot \gamma_\rho(t)^T = N(\gamma_\rho(t)) \cdot (\dot \gamma_\rho(t)\times \ddot \gamma_\rho(t))$. The remainder of the calculations depend explicitly on $\rho$ and $\gamma$, detailed in the \verb|evaluate_penalties| method of \verb|detector/energy.py|. \\
+Since the parameterization speed is not necessarily constant, we must take a further cross product with the velocity vector $\dot \gamma_\rho(t)$ to ensure that any nonzero tangential acceleration remains strictly aligned with the direction of the curve (representing scalar speeding up or slowing down). Accounting for this, we have $\abs{\ddot \gamma_\rho(t)^T} = N(\gamma_\rho(t)) \cdot (\dot \gamma_\rho(t)\times \ddot \gamma_\rho(t))$. The remainder of the calculations depend explicitly on $\rho$ and $\gamma$, detailed in the \verb|evaluate_penalties| method of \verb|detector/energy.py|. \\
 
 Finally, since $\gamma(s)$ is parameterized by an arbitrary variable $s \in [0, 1]$ rather than its true arclength parameter $t$, we apply the change of variables $dt = \abs {\dot \gamma_\rho(t)}ds$ to obtain 
 \[
