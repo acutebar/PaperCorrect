@@ -191,7 +191,7 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_
         speed_sq_clamped = torch.clamp(speed_sq, min=1e-12)
 
         integrand = (a_T**2) / (speed_sq_clamped**2.5)
-        trim = max(1, len(t) // 5) if len(t) > 10 else 0
+        trim = max(1, len(t) // 20) if len(t) > 10 else 0
         #trim=0
         if trim > 0:
             energy = torch.trapezoid(integrand[trim:-trim], t[trim:-trim])

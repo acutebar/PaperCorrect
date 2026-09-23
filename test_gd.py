@@ -35,18 +35,37 @@ SPLINE_DEG = 3
 # =============================================================================
 
 def get_focal_length_pixels(image_path):
+    IPHONE13_WIDE_FOCAL_35MM = 26.0  # iPhone 13 (non-Pro) main wide camera, 35mm-equivalent
+    FILM_DIAGONAL_MM = (36.0 ** 2 + 24.0 ** 2) ** 0.5  # diagonal of a 36x24mm 35mm-film frame
+    DEFAULT_SIZE_PX = (4032, 3024)  # iPhone 13 wide camera native 12MP resolution
+
     try:
         img_pil = Image.open(image_path)
+        w_px, h_px = img_pil.size
+    except Exception as e:
+        print(f"Warning: Could not open {image_path} ({e}). "
+              f"Assuming iPhone 13 wide camera at {DEFAULT_SIZE_PX[0]}x{DEFAULT_SIZE_PX[1]}.")
+        w_px, h_px = DEFAULT_SIZE_PX
+        exif = None
+    else:
         exif = img_pil._getexif()
-        focal_35mm = 50.0
-        if exif:
-            for tag_id, value in exif.items():
-                if ExifTags.TAGS.get(tag_id, tag_id) == 'FocalLengthIn35mmFilm':
-                    focal_35mm = float(value)
-                    break
-        return (focal_35mm / 36.0) * img_pil.size[0]
-    except Exception:
-        return 2912.0
+
+    focal_35mm = None
+    if exif:
+        for tag_id, value in exif.items():
+            if ExifTags.TAGS.get(tag_id, tag_id) == 'FocalLengthIn35mmFilm':
+                focal_35mm = float(value)
+                break
+
+    if focal_35mm is None:
+        print(f"Warning: EXIF FocalLengthIn35mmFilm not found for {image_path}. "
+              f"Defaulting to {IPHONE13_WIDE_FOCAL_35MM}mm (iPhone 13 wide camera).")
+        focal_35mm = IPHONE13_WIDE_FOCAL_35MM
+
+    # FocalLengthIn35mmFilm is diagonal-FOV-equivalent, so pixel focal length must be
+    # scaled by the sensor's diagonal, not its width, to be correct for non-3:2 aspect ratios.
+    diag_px = (w_px ** 2 + h_px ** 2) ** 0.5
+    return (focal_35mm / FILM_DIAGONAL_MM) * diag_px
 
 class PaperCorrectApp:
     def __init__(self, image_path):
