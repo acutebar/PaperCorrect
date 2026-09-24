@@ -84,6 +84,8 @@ def total_energy(T, curves, cloud_values, pinvX, cu, cv, f=1.0):
 
         total_E = total_E + energy
 
-    print(f"\tEnergy breakdown: Geodesic = {total_E}")
+    scale = cloud_values.mean()
+    adjusted_E = scale * total_E
+    print(f"\tEnergy breakdown: Geodesic = {total_E} | Scale = {scale} | adjusted = {adjusted_E}")
 
     return (total_E)
