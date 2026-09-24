@@ -10,6 +10,33 @@ import torch
 from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
 
+def generate_random_smooth_cloud(x_start, x_end, y_start, y_end, mult=100, depth_mean=1.0, depth_var=0.3, sigma=4.0):
+    num_points = int(mult) + 1
+    
+    xs = np.linspace(float(x_start), float(x_end), num_points)
+    ys = np.linspace(float(y_start), float(y_end), num_points)
+    
+    # 1. Generate pure uncorrelated Gaussian noise
+    raw_noise = np.random.normal(loc=0.0, scale=depth_var, size=(num_points, num_points))
+    
+    # 2. Apply low-pass Gaussian filter to create a smooth surface
+    smoothed_noise = gaussian_filter(raw_noise, sigma=sigma)
+    
+    # Normalize the smoothed noise back to the desired variance scale
+    if np.std(smoothed_noise) > 1e-8:
+        smoothed_noise = (smoothed_noise / np.std(smoothed_noise)) * depth_var
+        
+    grid_x, grid_y = np.meshgrid(xs, ys, indexing='xy')
+    
+    R_grid = np.sqrt(grid_x**2 + grid_y**2 + 1.0)
+    rho_grid = (depth_mean + smoothed_noise) * R_grid
+    
+    u = torch.tensor(grid_x.reshape(-1), dtype=torch.float64)
+    v = torch.tensor(grid_y.reshape(-1), dtype=torch.float64)
+    rho = torch.tensor(rho_grid.reshape(-1), dtype=torch.float64)
+    
+    return torch.column_stack([u, v, rho])
+
 def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
     num_points = int(mult) + 1
     
@@ -28,6 +55,7 @@ def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
 
 def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-4, initial_cloud=None):
     return run_adam_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud)
+
 
 def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.001, steps=500, eps=1e-5, initial_cloud=None):
     deformation_cloud = initial_cloud 
@@ -80,3 +108,51 @@ def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, step
 
 
     return torch.column_stack([cloud_coords, cloud_values])
+
+def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps, x_start, x_end, y_start, y_end, mult=100, deg=2, bin_size=0.5):
+    span = torch.pi / 3
+    flat_cloud = generate_flat_cloud(x_start, x_end, y_start, y_end, mult)
+    
+    topologies = [
+        ("Flat", flat_cloud)
+    ]
+    results = []
+    
+    for name, init_cloud in topologies:
+        print(f"  -> Testing {name} topology...")
+        
+        opt_cloud = run_gradient_descent(
+            T, active_curves, f=f, 
+            num_points=num_points, 
+            learning_rate=learning_rate, 
+            steps=steps, 
+            eps=eps,
+            initial_cloud=init_cloud,
+        )
+        
+        with torch.no_grad():
+            coords, values = opt_cloud[:, :2], opt_cloud[:, 2]
+            pinvX, (cu, cv) = quadratic_fit(coords)
+            energy = total_energy(T, active_curves, values, pinvX, cu, cv, f)
+            
+        results.append({
+            'name': name,
+            'cloud': opt_cloud,
+            'energy': energy,
+        })
+        print(f"     Energy: {energy:.4f}")
+
+    best_score = float('inf')
+    winner = None
+    
+    for res in results:
+        score =  res['energy']
+        res['score'] = score
+        
+        if score < best_score:
+            best_score = score
+            winner = res
+            
+    print(f"\nWinner: {winner['name']} (E: {winner['energy']:.4f})")
+        
+    return winner['cloud'], winner['energy']
