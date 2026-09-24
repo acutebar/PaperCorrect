@@ -12,12 +12,12 @@ from PIL import Image, ExifTags
 
 import detector
 from detector.gradient_descent import run_gradient_descent, generate_flat_cloud, run_multi_start_optimization
-from detector.energy import surface_fit, total_energy
+from detector.energy import surface_fit, total_energy, quadratic_fit
 
 # =============================================================================
 # GLOBAL HYPERPARAMETERS
 # =============================================================================
-GD_STEPS = 100                   
+GD_STEPS = 500                   
 GD_NORM_CUTOFF = 0.5            
 GD_LEARNING_RATE = 0.001          
 GD_CONTROL_GRID_MULT = 70         # Creates an 8x8 control point grid over the cropped area
@@ -30,7 +30,6 @@ CURVE_MAX_COUNT = 200
 ENERGY_CUTOFF = 3.0
 
 CURVE_BIN_SIZE = 0.2           # Bin size for B-spline curve fitting in normalized space
-SURFACE_BIN_SIZE = 2         # Bin size for 3D surface mesh rendering
 SPLINE_DEG = 3
 # =============================================================================
 
@@ -143,6 +142,7 @@ class PaperCorrectApp:
         self.baseline_coords = flat_cloud[:, :2].detach()
         self.baseline_values = flat_cloud[:, 2].detach().clone().requires_grad_(True)
         self.T_array = np.linspace(0, 1, TIME_DOMAIN_STEPS)
+        self.baseline_pinvX, (self.baseline_cu, self.baseline_cv) = quadratic_fit(self.baseline_coords)
 
         self.selected_lines = []
         self.curves_gd = []
@@ -157,7 +157,7 @@ class PaperCorrectApp:
             cur_curve = detector.Curve(centered_line_norm, deg=SPLINE_DEG, bin_size=CURVE_BIN_SIZE)
             
             with torch.no_grad():
-                e = total_energy(self.T_array, [cur_curve], self.baseline_coords, self.baseline_values, f=1.0).item()
+                e = total_energy(self.T_array, [cur_curve], self.baseline_values, self.baseline_pinvX, self.baseline_cu, self.baseline_cv, f=1.0).item()
                 
             if e < ENERGY_CUTOFF:
                 self.selected_lines.append(line)
@@ -201,7 +201,7 @@ class PaperCorrectApp:
             energy_str = "0.0000"
         else:
             with torch.no_grad():
-                e = total_energy(self.T_array, active_curves, self.baseline_coords, self.baseline_values, f=1.0).item()
+                e = total_energy(self.T_array, active_curves, self.baseline_values, self.baseline_pinvX, self.baseline_cu, self.baseline_cv, f=1.0).item()
             energy_str = f"{e:.4f}"
             
         self.ax_lines.set_title(f"STAGE 2: Click lines to deselect (Red=Inactive). Press Enter to optimize.\nInitial Baseline Energy of Active Lines: {energy_str}", fontweight='bold')
@@ -243,24 +243,25 @@ class PaperCorrectApp:
             x_start=self.x_min_norm, x_end=self.x_max_norm,
             y_start=self.y_min_norm, y_end=self.y_max_norm,
             mult=GD_CONTROL_GRID_MULT,
-            deg=SPLINE_DEG,
-            bin_size=SURFACE_BIN_SIZE
         )
         print(f"GD finished in {time.time() - t_start:.2f}s.")
-        
+
         with torch.no_grad():
-            final_energy = total_energy(T, active_curves_gd, opt_cloud[:, :2], opt_cloud[:, 2], f=1.0, deg=SPLINE_DEG, bin_size=SURFACE_BIN_SIZE).item()
-        
+            opt_coords, opt_values = opt_cloud[:, :2], opt_cloud[:, 2]
+            pinvX, (cu, cv) = quadratic_fit(opt_coords)
+            coeffs = pinvX @ opt_values
+            final_energy = total_energy(T, active_curves_gd, opt_values, pinvX, cu, cv, f=1.0).item()
+
         # Build 3D Mesh tightly across the cropped region
         X_grid_norm = np.linspace(self.x_min_norm, self.x_max_norm, MESH_DENSITY)
         Y_grid_norm = np.linspace(self.y_min_norm, self.y_max_norm, MESH_DENSITY)
         X_norm, Y_norm = np.meshgrid(X_grid_norm, Y_grid_norm)
-        
+
         u_mesh_flat = torch.tensor(X_norm.flatten(), dtype=torch.float64)
         v_mesh_flat = torch.tensor(Y_norm.flatten(), dtype=torch.float64)
-        
-        # Fit depth parameter w over normalized coordinates (using scaled SURFACE_BIN_SIZE)
-        w_mesh_tensor = surface_fit(u_mesh_flat, v_mesh_flat, opt_cloud, deg=SPLINE_DEG, bin_size=SURFACE_BIN_SIZE)[0]
+
+        # Fit depth parameter w over normalized coordinates
+        w_mesh_tensor = surface_fit(u_mesh_flat - cu, v_mesh_flat - cv, coeffs)[0]
         w_mesh = w_mesh_tensor.detach().numpy().reshape(X_norm.shape)
         
         # Map physical 3D coordinates, scaled back to pixel magnitude

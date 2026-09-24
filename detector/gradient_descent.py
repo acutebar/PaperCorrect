@@ -4,7 +4,7 @@ from scipy.optimize import minimize
 from .energy import (
     surface_fit,
     total_energy,
-    evaluate_complexity
+    quadratic_fit
 )
 import torch
 from scipy.ndimage import gaussian_filter
@@ -53,19 +53,20 @@ def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
     
     return torch.column_stack([u, v, w])
 
-def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-4, initial_cloud=None, deg=2, bin_size=0.5):
-    return run_vanilla_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud, deg, bin_size)
+def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-4, initial_cloud=None):
+    return run_adam_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud)
 
 
-def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.001, steps=500, eps=1e-5, initial_cloud=None, deg=2, bin_size=0.5):
+def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.001, steps=500, eps=1e-5, initial_cloud=None):
     deformation_cloud = initial_cloud 
     cloud_coords = deformation_cloud[:, :2].detach()
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
 
+    pinvX, (cu, cv) = quadratic_fit(cloud_coords)
 
     for i in range(steps):
         #optimizer.zero_grad()
-        TE = total_energy(t, curves, cloud_coords, cloud_values, f, deg, bin_size)
+        TE = total_energy(t, curves, cloud_values, pinvX, cu, cv, f)
         TE.backward()
         
         grad_norm = cloud_values.grad.norm().item()
@@ -87,10 +88,12 @@ def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, step
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
     
     optimizer = torch.optim.Adam([cloud_values], lr=learning_rate)
+    
+    pinvX, (cu, cv) = quadratic_fit(cloud_coords)
 
     for i in range(steps):
         optimizer.zero_grad()
-        TE = total_energy(t, curves, cloud_coords, cloud_values, f, deg, bin_size)
+        TE = total_energy(t, curves, cloud_values, pinvX, cu, cv, f)
         TE.backward()
         
         grad_norm = cloud_values.grad.norm().item()
@@ -125,30 +128,25 @@ def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate,
             steps=steps, 
             eps=eps,
             initial_cloud=init_cloud,
-            deg=deg,
-            bin_size=bin_size
         )
         
         with torch.no_grad():
-            coords = opt_cloud[:, :2]
-            values = opt_cloud[:, 2]
-            
-            energy = total_energy(T, active_curves, coords, values, f, deg, bin_size).item()
-            complexity = evaluate_complexity(T, active_curves, coords, values, f, deg, bin_size)
+            coords, values = opt_cloud[:, :2], opt_cloud[:, 2]
+            pinvX, (cu, cv) = quadratic_fit(coords)
+            energy = total_energy(T, active_curves, values, pinvX, cu, cv, f)
             
         results.append({
             'name': name,
             'cloud': opt_cloud,
             'energy': energy,
-            'complexity': complexity
         })
-        print(f"     Energy: {energy:.4f} | Complexity: {complexity:.4f}")
+        print(f"     Energy: {energy:.4f}")
 
     best_score = float('inf')
     winner = None
     
     for res in results:
-        score = (W_ENERGY * res['energy']) 
+        score =  res['energy']
         res['score'] = score
         
         if score < best_score:

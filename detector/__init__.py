@@ -13,5 +13,5 @@ from .fnfit import Curve
 from .fnfit import bump
 from .fnfit import fn_fit
 from .fnfit import curve_fit
-from .energy import bump_2d, surface_fit, total_energy, evaluate_penalties, evaluate_complexity
+from .energy import surface_fit, total_energy, quadratic_fit
 from .gradient_descent import generate_flat_cloud, generate_random_smooth_cloud, run_gradient_descent, run_multi_start_optimization

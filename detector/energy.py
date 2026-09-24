@@ -6,145 +6,32 @@ import math
 from .fnfit import bump, step_function, Curve
 import torch
 
-def bump_2d(u, v, du, dv, u0, v0, ju, jv, deg=2):
-    """
-    2D Tensor Product B-spline bump function.
-    Constructs the 2D surface patches and exact spatial derivatives.
-    """
-    Bu, Bu_du, Bu_ddu = bump(u, du, u0, ju, deg)
-    Bv, Bv_dv, Bv_ddv = bump(v, dv, v0, jv, deg)
-    
-    B_val = Bu * Bv
-    B_u = Bu_du * Bv
-    B_v = Bu * Bv_dv
-    B_uu = Bu_ddu * Bv
-    B_vv = Bu * Bv_ddv
-    B_uv = Bu_du * Bv_dv
-    
-    return B_val, B_u, B_v, B_uu, B_vv, B_uv
+def quadratic_fit(cloud_coord):
+    raw_u, raw_v = cloud_coord[:, 0], cloud_coord[:, 1]
+    cu = raw_u.mean()
+    cv = raw_v.mean()
+    u = raw_u - cu
+    v = raw_v - cv
 
-def surface_fit(u, v, cloud, deg=2, bin_size=1.0):
-    u = torch.as_tensor(u, dtype=torch.float64, device=cloud.device)
-    v = torch.as_tensor(v, dtype=torch.float64, device=cloud.device)
-    cloud = torch.as_tensor(cloud, dtype=torch.float64)
-    cloud_u, cloud_v, cloud_rho = cloud[:, 0], cloud[:, 1], cloud[:, 2]
-    
-    # Define bounds based on the target evaluation grid to prevent boundary collapse
-    u_min, u_max = float(torch.min(u)), float(torch.max(u))
-    v_min, v_max = float(torch.min(v)), float(torch.max(v))
-    
-    num_bins_u = int((u_max - u_min) // bin_size) + 1
-    num_bins_v = int((v_max - v_min) // bin_size) + 1
-    
-    local_fits = {}
-    for i in range(num_bins_u):
-        for j in range(num_bins_v):
-            bu_start = u_min + i * bin_size
-            bu_end = u_min + (i + 1) * bin_size
-            bv_start = v_min + j * bin_size
-            bv_end = v_min + (j + 1) * bin_size
-            
-            # Bin centers for well-conditioned local polynomial fits
-            cu = u_min + (i + 0.5) * bin_size
-            cv = v_min + (j + 0.5) * bin_size
-            
-            mask = (cloud_u >= bu_start) & (cloud_u < bu_end) & (cloud_v >= bv_start) & (cloud_v < bv_end)
-            
-            if torch.sum(mask) < 6: 
-                local_fits[(i, j)] = None
-                continue
-                
-            # Center coordinates to prevent explosive quadratic coefficients
-            lu, lv, lr = cloud_u[mask] - cu, cloud_v[mask] - cv, cloud_rho[mask]
-            A = torch.column_stack([torch.ones_like(lu), lu, lv, lu**2, lu*lv, lv**2])
-            coeffs = torch.linalg.pinv(A) @ lr
-            local_fits[(i, j)] = (coeffs, cu, cv)
+    A = torch.column_stack([torch.ones_like(u), u, v, u**2, u*v, v**2])
+    return torch.linalg.pinv(A), (cu, cv)
 
-    valid_fits = {k: v for k, v in local_fits.items() if v is not None}
+def surface_fit(x, y, coeffs):
+    """Global quadratic w and its derivatives. x, y must be centered (x - cu, y - cv)."""
+    c0, c1, c2, c3, c4, c5 = coeffs
+    w    = c0 + c1*x + c2*y + c3*x**2 + c4*x*y + c5*y**2
+    w_x  = c1 + 2*c3*x + c4*y
+    w_y  = c2 + c4*x + 2*c5*y
+    w_xx = torch.full_like(x, 1.0) * (2*c3)
+    w_yy = torch.full_like(x, 1.0) * (2*c5)
+    w_xy = torch.full_like(x, 1.0) * c4
+    return w, w_x, w_y, w_xx, w_yy, w_xy
 
-    for i in range(num_bins_u):
-        for j in range(num_bins_v):
-            if local_fits[(i, j)] is None:
-                cu = u_min + (i + 0.5) * bin_size
-                cv = v_min + (j + 0.5) * bin_size
-                if valid_fits:
-                    nearest_k = min(valid_fits.keys(), key=lambda k: (k[0]-i)**2 + (k[1]-j)**2)
-                    source_coeffs, _, _ = valid_fits[nearest_k]
-                    local_fits[(i, j)] = (source_coeffs, cu, cv)
-                else:
-                    lu_all = cloud_u - cu
-                    lv_all = cloud_v - cv
-                    A_all = torch.column_stack([torch.ones_like(lu_all), lu_all, lv_all, lu_all**2, lu_all*lv_all, lv_all**2])
-                    local_coeffs = torch.linalg.pinv(A_all) @ cloud_rho
-                    local_fits[(i, j)] = (local_coeffs, cu, cv)
-
-    g_val = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
-    g_u   = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
-    g_v   = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
-    g_uu  = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
-    g_vv  = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
-    g_uv  = torch.zeros_like(u, dtype=cloud_rho.dtype, device=cloud_rho.device)
-
-    for ju in range(-deg, num_bins_u):
-        for jv in range(-deg, num_bins_v):
-            idx_u = max(0, min(ju + (deg // 2), num_bins_u - 1))
-            idx_v = max(0, min(jv + (deg // 2), num_bins_v - 1))
-            
-            coeffs, cu, cv = local_fits[(idx_u, idx_v)]
-            c0, c1, c2, c3, c4, c5 = coeffs
-            
-            du_val = u - cu
-            dv_val = v - cv
-            
-            P_val = c0 + c1*du_val + c2*dv_val + c3*du_val**2 + c4*du_val*dv_val + c5*dv_val**2
-            P_u = c1 + 2*c3*du_val + c4*dv_val
-            P_v = c2 + c4*du_val + 2*c5*dv_val
-            P_uu = 2*c3 * torch.ones_like(u)
-            P_vv = 2*c5 * torch.ones_like(u)
-            P_uv = c4 * torch.ones_like(u)
-            
-            B_val_np, B_u_np, B_v_np, B_uu_np, B_vv_np, B_uv_np = bump_2d(u.detach().cpu().numpy(), v.detach().cpu().numpy(), bin_size, bin_size, u_min, v_min, ju, jv, deg)
-            
-            # Convert immediately to PyTorch tensors for multiplication
-            B_val = torch.as_tensor(B_val_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
-            B_u   = torch.as_tensor(B_u_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
-            B_v   = torch.as_tensor(B_v_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
-            B_uu  = torch.as_tensor(B_uu_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
-            B_vv  = torch.as_tensor(B_vv_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
-            B_uv  = torch.as_tensor(B_uv_np, dtype=cloud_rho.dtype, device=cloud_rho.device)
-            
-            g_val += B_val * P_val
-            g_u += B_u * P_val + B_val * P_u
-            g_v += B_v * P_val + B_val * P_v
-            g_uu += B_uu * P_val + 2 * B_u * P_u + B_val * P_uu
-            g_vv += B_vv * P_val + 2 * B_v * P_v + B_val * P_vv
-            g_uv += B_uv * P_val + B_u * P_v + B_v * P_u + B_val * P_uv
-
-    return g_val, g_u, g_v, g_uu, g_vv, g_uv
-
-
-def total_energy(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_size=0.5):
-    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f, deg, bin_size)[0]
-def evaluate_complexity(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_size=0.5):
-    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f, deg, bin_size)[2]
-
-def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_size=0.5, arcmultiply=False):
-    total_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
+def total_energy(T, curves, cloud_values, pinvX, cu, cv, f=1.0):
     t = torch.as_tensor(T)
-    geo_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
-    mean_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
-    gauss_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
-    var_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
-    height_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
 
-    deformation_cloud = torch.column_stack([cloud_coords, cloud_values])
-    arclens = []
-
-    lambda_depth = 0.0
-    lambda_h = 0.0
-    lambda_k = 0.0
-    lambda_var = 0.0
-    lambda_surf = 0.0
+    coeffs = pinvX @ cloud_values
+    total_E = coeffs.new_zeros(())
 
     for curve in curves:
         x, y = curve.point_at(t)
@@ -159,13 +46,10 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_
         ay = torch.as_tensor(ay, dtype=torch.float64).ravel()
         f_tensor = torch.full_like(x, f)
 
-        w, w_x, w_y, w_xx, w_yy, w_xy = surface_fit(x, y, deformation_cloud, deg, bin_size)
+        w, w_x, w_y, w_xx, w_yy, w_xy = surface_fit(x-cu, y-cv, coeffs)
         
         gamma_x = torch.stack([w_x * x + w, w_x * y, w_x * f_tensor], dim=1)
         gamma_y = torch.stack([w_y * x, w_y * y + w, w_y * f_tensor], dim=1)
-        gamma_xx = torch.stack([w_xx * x + 2 * w_x, w_xx * y, w_xx * f_tensor], dim=1)
-        gamma_yy = torch.stack([w_yy * x, w_yy * y + 2 * w_y, w_yy * f_tensor], dim=1)
-        gamma_xy = torch.stack([w_xy * x + w_y, w_xy * y + w_x, w_xy * f_tensor], dim=1)
 
         N_cross = torch.linalg.cross(gamma_x, gamma_y, dim=1)
         N_norm = torch.linalg.norm(N_cross, dim=1, keepdim=True)
@@ -195,53 +79,11 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_
         #trim=0
         if trim > 0:
             energy = torch.trapezoid(integrand[trim:-trim], t[trim:-trim])
-            og_energy = torch.trapezoid(integrand, t)
-            #print("EDGE ENERGY: ", og_energy - energy)
-
-            arclen = torch.trapezoid(torch.sqrt(speed_sq_clamped[trim:-trim]), t[trim:-trim])
         else:
             energy = torch.trapezoid(integrand, t)
-            arclen = torch.trapezoid(torch.sqrt(speed_sq_clamped), t)
 
-        arclens.append(arclen)
+        total_E = total_E + energy
 
-        E = (gamma_x * gamma_x).sum(dim=1)
-        F = (gamma_x * gamma_y).sum(dim=1)
-        G = (gamma_y * gamma_y).sum(dim=1)
-        L = (gamma_xx * N_vec).sum(dim=1)
-        M = (gamma_xy * N_vec).sum(dim=1)
-        N = (gamma_yy * N_vec).sum(dim=1)
-        H = (E * N - 2.0 * F * M + G * L) / (2.0 * (E * G - F**2) + 1e-12)
-        K = (L * N - M**2) / (E * G - F**2 + 1e-12)
+    print(f"\tEnergy breakdown: Geodesic = {total_E}")
 
-
-        h_penalty = torch.trapezoid(H**2, t)
-        k_penalty = torch.trapezoid(K**2, t)
-
-        depth_penalty = torch.trapezoid(torch.relu(w - 3.0)**2 + torch.relu(0.2 - w)**2, t)
-
-
-        geo_E = geo_E + energy
-        mean_E = mean_E + lambda_h * h_penalty 
-        gauss_E = gauss_E + lambda_k * k_penalty 
-        height_E = height_E + lambda_depth * depth_penalty 
-        total_E = total_E + energy + (lambda_h * h_penalty) + (lambda_k * k_penalty) + (lambda_depth * depth_penalty)
-
-    if len(arclens) > 1:
-        arclens_tensor = torch.stack(arclens)
-        var = torch.var(arclens_tensor)
-    else:
-        var = torch.tensor(0.0, dtype=torch.float64, device=total_E.device)
-
-    #print("Length variance ", lambda_var * var)
-
-    var_E = lambda_var * var
-    total_E = total_E + lambda_var * var
-
-    _, _, _, w_xx_g, w_yy_g, w_xy_g = surface_fit(cloud_coords[:, 0], cloud_coords[:, 1], deformation_cloud, deg, bin_size)
-    surf_E = lambda_surf * torch.mean(w_xx_g**2 + 2.0 * w_xy_g**2 + w_yy_g**2)
-    total_E = total_E + surf_E
-
-    print(f"\tEnergy breakdown: Geodesic = {geo_E} | Mean Curvature = {mean_E} | Gauss Curvature = {gauss_E} | \n\t Height penalty = {height_E} | Variance penalty = {var_E} | Surface penalty = {surf_E}")
-
-    return (total_E, geo_E, mean_E, gauss_E, height_E, var_E, surf_E)
+    return (total_E)
