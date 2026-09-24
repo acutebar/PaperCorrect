@@ -230,7 +230,7 @@ class PaperCorrectApp:
             print("All lines deselected. Exiting.")
             return
 
-        print(f"\nStarting Adam Optimization on {len(active_curves_gd)} lines...")
+        print(f"\nStarting Optimization on {len(active_curves_gd)} lines...")
         T = np.linspace(0, 1, TIME_DOMAIN_STEPS)
         t_start = time.time()
         
@@ -249,7 +249,7 @@ class PaperCorrectApp:
         print(f"GD finished in {time.time() - t_start:.2f}s.")
         
         with torch.no_grad():
-            final_energy = total_energy(T, active_curves_gd, opt_cloud[:, :2], opt_cloud[:, 2], f=1.0).item()
+            final_energy = total_energy(T, active_curves_gd, opt_cloud[:, :2], opt_cloud[:, 2], f=1.0, deg=SPLINE_DEG, bin_size=SURFACE_BIN_SIZE).item()
         
         # Build 3D Mesh tightly across the cropped region
         X_grid_norm = np.linspace(self.x_min_norm, self.x_max_norm, MESH_DENSITY)

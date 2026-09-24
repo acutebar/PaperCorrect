@@ -13,14 +13,14 @@ def get_disc_kernel(radius):
     # Normalize so the sum of all weights equals 1.0 (calculates the mean)
     return kernel / np.sum(kernel)
 
-def paper_clean_fast(img):
+def paper_clean_fast(img, inner=1, outer=30, cutoff=15):
     print("Cleaning paper...")
     # Convert to float32 to prevent overflow during squaring and convolution
     img_float = img.astype(np.float32)
 
     # 1. Generate the circular kernels for radius r and R
-    kernel_r2 = get_disc_kernel(3)
-    kernel_r5 = get_disc_kernel(30)
+    kernel_r2 = get_disc_kernel(inner)
+    kernel_r5 = get_disc_kernel(outer)
 
     print("Computing global and local statistics simultaneously...")
     # 2. Compute pixel_brightness (radius 2 mean) across the entire image at once
@@ -49,8 +49,8 @@ def paper_clean_fast(img):
     new_img = np.full(img.shape, 255, dtype=np.uint8)
 
     # 6. Apply your exact conditional logic vector-wide using boolean masks
-    dark_mask = pixel_brightness < (local_brightness - 15)
-    bright_mask = pixel_brightness > (local_brightness + 15)
+    dark_mask = pixel_brightness < (local_brightness - cutoff)
+    bright_mask = pixel_brightness > (local_brightness + cutoff)
 
     new_img[dark_mask] = 0
     new_img[bright_mask] = 255

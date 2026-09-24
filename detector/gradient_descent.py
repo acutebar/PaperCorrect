@@ -56,7 +56,7 @@ def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
     return torch.column_stack([u, v, w])
 
 def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-4, initial_cloud=None, deg=2, bin_size=0.5):
-    return run_adam_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud, deg, bin_size)
+    return run_vanilla_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud, deg, bin_size)
 
 
 def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.001, steps=500, eps=1e-5, initial_cloud=None, deg=2, bin_size=0.5):
@@ -67,16 +67,16 @@ def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.00
     # -------------------------------------------------------------
     # Live 3D Plot Setup
     # -------------------------------------------------------------
-    plt.ion()
-    fig = plt.figure(figsize=(7, 6))
-    ax = fig.add_subplot(111, projection='3d')
+    #plt.ion()
+    #fig = plt.figure(figsize=(7, 6))
+    #ax = fig.add_subplot(111, projection='3d')
     
     # Infer grid resolution along each axis
-    grid_dim = int(round(math.sqrt(cloud_coords.shape[0])))
-    x_flat = cloud_coords[:, 0].detach().cpu().numpy()
-    y_flat = cloud_coords[:, 1].detach().cpu().numpy()
+    #grid_dim = int(round(math.sqrt(cloud_coords.shape[0])))
+    #x_flat = cloud_coords[:, 0].detach().cpu().numpy()
+    #y_flat = cloud_coords[:, 1].detach().cpu().numpy()
     
-    surf_plot = None
+    #surf_plot = None
 
     for i in range(steps):
         #optimizer.zero_grad()
@@ -244,8 +244,8 @@ def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate,
             coords = opt_cloud[:, :2]
             values = opt_cloud[:, 2]
             
-            energy = total_energy(T, active_curves, coords, values, f).item()
-            complexity = evaluate_complexity(T, active_curves, coords, values, f)
+            energy = total_energy(T, active_curves, coords, values, f, deg, bin_size).item()
+            complexity = evaluate_complexity(T, active_curves, coords, values, f, deg, bin_size)
             
         results.append({
             'name': name,

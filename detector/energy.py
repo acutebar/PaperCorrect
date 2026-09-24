@@ -124,9 +124,9 @@ def surface_fit(u, v, cloud, deg=2, bin_size=1.0):
 
 
 def total_energy(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_size=0.5):
-    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f, deg)[0]
-def evaluate_complexity(T, curves, cloud_coords, cloud_values, f=1.0, deg=2):
-    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f, deg)[2]
+    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f, deg, bin_size)[0]
+def evaluate_complexity(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_size=0.5):
+    return evaluate_penalties(T, curves, cloud_coords, cloud_values, f, deg, bin_size)[2]
 
 def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_size=0.5, arcmultiply=False):
     total_E = torch.tensor(0.0, dtype=torch.float64, device=cloud_coords.device)
@@ -242,6 +242,6 @@ def evaluate_penalties(T, curves, cloud_coords, cloud_values, f=1.0, deg=2, bin_
     surf_E = lambda_surf * torch.mean(w_xx_g**2 + 2.0 * w_xy_g**2 + w_yy_g**2)
     total_E = total_E + surf_E
 
-    print(f"\tEnergy breakdown: Geodesic = {geo_E} | Mean Curvature = {mean_E} | Gauss Curvature = {gauss_E} | \n\t Height penalty = {height_E} | Variance penalty = {var_E} | Surface penalty = {surf_E}", (total_E, geo_E, mean_E, gauss_E, height_E, var_E, surf_E))
+    print(f"\tEnergy breakdown: Geodesic = {geo_E} | Mean Curvature = {mean_E} | Gauss Curvature = {gauss_E} | \n\t Height penalty = {height_E} | Variance penalty = {var_E} | Surface penalty = {surf_E}")
 
     return (total_E, geo_E, mean_E, gauss_E, height_E, var_E, surf_E)
