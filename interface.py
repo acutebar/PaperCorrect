@@ -93,7 +93,7 @@ class KinematicsGUI:
             blurred = cv.GaussianBlur(cropped_img, (5, 5), 0)
             cleaned = cv.adaptiveThreshold(blurred, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 15)
             
-            detec = detector.LineDetector(width=2, height=10, step=5)
+            detec = detector.LineDetector(width=2, height=10, step=5, check_angle=False)
             local_lines = detec.findall_lines(cleaned)
             
             self.ax_img.clear()

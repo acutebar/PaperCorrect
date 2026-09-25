@@ -34,9 +34,10 @@ def total_energy(T, curves, cloud_values, pinvX, cu, cv, f=1.0):
     total_E = coeffs.new_zeros(())
 
     for curve in curves:
-        x, y = curve.point_at(t)
-        vx, vy = curve.velocity_at(t)
-        ax, ay = curve.acceleration_at(t)
+        res = curve.curve_at(t)
+        x, y = res[0][0], res[0][1]
+        vx, vy = res[1][0], res[1][1]
+        ax, ay = res[2][0], res[2][1]
 
         x = torch.as_tensor(x, dtype=torch.float64).ravel()
         y = torch.as_tensor(y, dtype=torch.float64).ravel()

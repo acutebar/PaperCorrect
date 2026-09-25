@@ -28,7 +28,7 @@ def _pack(offset_list):
 
 
 class LineDetector:
-    def __init__(self, width=2, height=5, step=5, sweep=30):
+    def __init__(self, width=2, height=5, step=5, sweep=30, check_angle=True):
         self.kernel = get_disc_kernel(height)
         self.angles = np.arange(0, 360, step).astype(np.int64)
         self.nbrs = max(1, sweep // step)   # neighbors per side in the valley test
@@ -50,6 +50,7 @@ class LineDetector:
         self.DY, self.DX, self.cnt = _pack(templates)
         self.TR = np.array(TR, np.int64)
         self.TC = np.array(TC, np.int64)
+        self.check_angle = check_angle
 
         # Footprints of the visited marks (thick line curr -> curr + tip, and
         # the start circle), rasterized once by OpenCV and stamped at runtime.
@@ -84,7 +85,7 @@ class LineDetector:
         pts, offs = _find_all(
             pimg, pthresh, visited, dark, self.angles, self.nbrs,
             self.DY, self.DX, self.cnt, self.TR, self.TC,
-            self.FY, self.FX, self.fcnt, self.CY, self.CX,
+            self.FY, self.FX, self.fcnt, self.CY, self.CX, self.check_angle
         )
         pts -= p
         return [list(map(tuple, pts[a:b].tolist())) for a, b in zip(offs[:-1], offs[1:])]
@@ -143,7 +144,7 @@ def _push(pts, n, r, c):
 
 @njit(cache=True)
 def _find_all(img, thresh, visited, dark, angles, nbrs, DY, DX, cnt, TR, TC,
-              FY, FX, fcnt, CY, CX):
+              FY, FX, fcnt, CY, CX, check_angle=True):
     means = np.empty(DY.shape[0])
     pts = np.empty((1024, 2), np.int64)
     offs = np.zeros(dark.shape[0] + 1, np.int64)
@@ -168,13 +169,15 @@ def _find_all(img, thresh, visited, dark, angles, nbrs, DY, DX, cnt, TR, TC,
                                    DY, DX, cnt, TR, TC, means)
             if k == 0:
                 break
-            ang = angles[best]
-            if npts - start == 1:
-                base = prev = ang
-            elif (abs((ang - prev + 180) % 360 - 180) > 45 or
-                  abs((ang - base + 180) % 360 - 180) > 60):
-                break
-            prev = ang
+
+            if check_angle:
+                ang = angles[best]
+                if npts - start == 1:
+                    base = prev = ang
+                elif (abs((ang - prev + 180) % 360 - 180) > 45 or
+                      abs((ang - base + 180) % 360 - 180) > 60):
+                    break
+                prev = ang
 
             m = fcnt[best]
             _stamp(visited, r, c, FY[best, :m], FX[best, :m])

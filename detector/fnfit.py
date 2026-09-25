@@ -9,6 +9,13 @@ class Curve:
         self.cloud = np.asarray(cloud, dtype=float)
         self.deg = deg
         self.bin_size = bin_size
+        self.res = None
+
+    def curve_at(self, t):
+        t_arr = np.asarray(t)
+        res = curve_fit(t_arr, self.cloud, deg=self.deg, bin_size=self.bin_size)
+        self.res = res
+        return res
 
     def point_at(self, t):
         t_arr = np.asarray(t)
