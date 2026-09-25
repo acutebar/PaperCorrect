@@ -1,148 +1,214 @@
+import math
+
 import cv2 as cv
 import numpy as np
-import matplotlib.pyplot as plt
-from typing import Union
-import math
+from numba import njit
+
 from .edge_detector import get_disc_kernel
+
+
+def _offsets(mask, center):
+    """Pixels set in a scratch canvas, as (dy, dx) offsets from its center."""
+    dy, dx = np.nonzero(mask)
+    return dy - center, dx - center
+
+
+def _pack(offset_list):
+    """Ragged list of (dy, dx) -> padded (n, K) arrays plus per-row counts."""
+    K = max(len(dy) for dy, _ in offset_list)
+    n = len(offset_list)
+    DY = np.zeros((n, K), np.int64)
+    DX = np.zeros((n, K), np.int64)
+    cnt = np.zeros(n, np.int64)
+    for i, (dy, dx) in enumerate(offset_list):
+        DY[i, :len(dy)] = dy
+        DX[i, :len(dx)] = dx
+        cnt[i] = len(dy)
+    return DY, DX, cnt
+
 
 class LineDetector:
     def __init__(self, width=2, height=5, step=5, sweep=30):
         self.width = width
         self.height = height
-        self.step = step
-        self.sweep = sweep
-        self.angles = np.arange(0, 360, step)
-        
-        self.templates = {}
-        self.tips = {}
-        
-        self.max_radius = int(np.ceil(height)) + 2
-        center = (self.max_radius, self.max_radius)
-        
+        self.angles = np.arange(0, 360, step).astype(np.int64)
+        self.pad = R = int(np.ceil(height)) + 2
+
+        templates, tips = [], []
         for angle in self.angles:
-            tilt = math.radians(angle)
-            tip_r = height * math.cos(tilt)
-            tip_c = -height * math.sin(tilt)
-            
-            mask = np.zeros((2 * self.max_radius + 1, 2 * self.max_radius + 1), dtype=np.uint8)
-            cv.line(mask, center, 
-                     (int(round(center[1] + tip_c)), int(round(center[0] + tip_r))), 
-                     255, thickness=width)
-            
-            dy, dx = np.where(mask > 0)
-            self.templates[angle] = (dy - center[0], dx - center[1])
-            self.tips[angle] = (int(round(tip_r)), int(round(tip_c)))
+            t = math.radians(angle)
+            tip_r = height * math.cos(t)
+            tip_c = -height * math.sin(t)
+            mask = np.zeros((2 * R + 1, 2 * R + 1), np.uint8)
+            cv.line(mask, (R, R),
+                    (int(round(R + tip_c)), int(round(R + tip_r))),
+                    255, thickness=width)
+            templates.append(_offsets(mask, R))
+            tips.append((int(round(tip_r)), int(round(tip_c))))
 
-    def get_valid_paths(self, padded_img, pivot, visited_mask, thresh_map):
-        pr, pc = pivot
-        threshold = thresh_map[pr, pc]
-        
-        means = []
-        for angle in self.angles:
-            dy, dx = self.templates[angle]
-            mean = np.mean(padded_img[pr + dy, pc + dx])
-            
-            tr, tc = self.tips[angle]
-            tip_r, tip_c = pr + tr, pc + tc
-            
-            is_visited = visited_mask[tip_r, tip_c]
-            means.append((mean, angle, tip_r, tip_c, is_visited))
-            
-        paths = []
-        n = len(means)
-        neighbor_count = max(1, self.sweep // self.step)
-        
-        for i in range(n):
-            curr_m = means[i][0]
-            is_valley = True
-            
-            for j in range(1, neighbor_count + 1):
-                prev_m = means[(i - j) % n][0]
-                next_m = means[(i + j) % n][0]
-                
-                if curr_m >= prev_m or curr_m > next_m:
-                    is_valley = False
-                    break
-                    
-            if is_valley and curr_m < threshold and not means[i][4]:
-                paths.append(means[i])
-                
-        return paths
+        self.DY, self.DX, self.cnt = _pack(templates)
+        self.TR = np.array([t[0] for t in tips], np.int64)
+        self.TC = np.array([t[1] for t in tips], np.int64)
 
-    def mark_visited(self, visited_mask, p1, p2):
-        pt1 = (int(p1[1]), int(p1[0]))
-        pt2 = (int(p2[1]), int(p2[0]))
-        cv.line(visited_mask, pt1, pt2, 1, thickness=self.width + 2)
+        # Circular neighbor indices for the valley test
+        n = len(self.angles)
+        m = max(1, sweep // step)
+        i = np.arange(n)[:, None]
+        j = np.arange(1, m + 1)[None, :]
+        self.PREV = (i - j) % n
+        self.NEXT = (i + j) % n
 
-    def line_detect(self, padded_img, start, visited_mask, thresh_map):
-        paths = self.get_valid_paths(padded_img, start, visited_mask, thresh_map)
-        if len(paths) != 1:
-            return None
-            
-        line = [start]
-        cv.circle(visited_mask, (int(start[1]), int(start[0])), self.width + 1, 1, -1)
-        curr = start
-        prev_angle = None
-        base_angle = None
-        
-        while True:
-            paths = self.get_valid_paths(padded_img, curr, visited_mask, thresh_map)
-            if len(paths) == 0:
-                break 
-                
-            best_path = min(paths, key=lambda x: x[0])
-            next_move = (best_path[2], best_path[3])
+        # Footprints of mark_visited (cv.line, curr -> curr + tip) and the
+        # start circle, rasterized once by OpenCV and stamped at runtime.
+        # Canvas is large enough that nothing is clipped.
+        Rf = int(np.ceil(height)) + width + 4
+        feet = []
+        for tr, tc in tips:
+            mask = np.zeros((2 * Rf + 1, 2 * Rf + 1), np.uint8)
+            cv.line(mask, (Rf, Rf), (Rf + tc, Rf + tr), 1, thickness=width + 2)
+            feet.append(_offsets(mask, Rf))
+        self.FY, self.FX, self.fcnt = _pack(feet)
 
-            cur_angle = best_path[1]
-
-            if prev_angle is not None:
-                diff = abs((cur_angle - prev_angle + 180) % 360 - 180)
-                total_diff = abs((cur_angle - base_angle + 180) % 360 - 180)
-                if diff > 45:
-                    break
-                elif total_diff > 60:
-                    break
-            else:
-                prev_angle = cur_angle
-                base_angle = cur_angle
-
-            prev_angle = cur_angle
-
-            line.append(next_move)
-            self.mark_visited(visited_mask, curr, next_move)
-            curr = next_move
-            
-        return line
+        mask = np.zeros((2 * Rf + 1, 2 * Rf + 1), np.uint8)
+        cv.circle(mask, (Rf, Rf), width + 1, 1, -1)
+        self.CY, self.CX = _offsets(mask, Rf)
 
     def findall_lines(self, img):
         kernel = get_disc_kernel(self.height)
-        img_float = img.astype(np.float32)
-        
-        # Precompute local means and stds globally
-        local_mean = cv.filter2D(img_float, -1, kernel, borderType=cv.BORDER_REFLECT)
-        local_mean_sq = cv.filter2D(img_float**2, -1, kernel, borderType=cv.BORDER_REFLECT)
-        local_var = np.maximum(0, local_mean_sq - (local_mean**2))
-        thresh_map = local_mean - (np.sqrt(local_var) * 0.5)
+        f = img.astype(np.float32)
+        mean = cv.filter2D(f, -1, kernel, borderType=cv.BORDER_REFLECT)
+        mean_sq = cv.filter2D(f * f, -1, kernel, borderType=cv.BORDER_REFLECT)
+        thresh = mean - 0.5 * np.sqrt(np.maximum(0, mean_sq - mean * mean))
 
-        # Pad variables to prevent bounds checking
-        pad = self.max_radius
-        padded_img = cv.copyMakeBorder(img, pad, pad, pad, pad, cv.BORDER_CONSTANT, value=255)
-        padded_thresh = cv.copyMakeBorder(thresh_map, pad, pad, pad, pad, cv.BORDER_CONSTANT, value=0)
-        
-        # Visited mask defaults to 1 (visited) outside the true image bounds
-        visited_mask = np.ones(padded_img.shape, dtype=np.uint8)
-        visited_mask[pad:-pad, pad:-pad] = 0
-        
-        lines = []
-        dark_pixels = np.argwhere(img == 0)
-        
-        for r, c in dark_pixels:
-            pr, pc = r + pad, c + pad
-            if not visited_mask[pr, pc]:
-                line_padded = self.line_detect(padded_img, (pr, pc), visited_mask, padded_thresh)
-                if line_padded is not None and len(line_padded) > 1:
-                    line = [(pr_val - pad, pc_val - pad) for (pr_val, pc_val) in line_padded]
-                    lines.append(line)
-                    
-        return lines
+        p = self.pad
+        pimg = cv.copyMakeBorder(img, p, p, p, p, cv.BORDER_CONSTANT, value=255)
+        pthresh = cv.copyMakeBorder(thresh, p, p, p, p, cv.BORDER_CONSTANT, value=0)
+        visited = np.ones(pimg.shape, np.uint8)
+        visited[p:-p, p:-p] = 0
+        dark = np.argwhere(img == 0).astype(np.int64) + p
 
+        pts, offs = _find_all(
+            pimg, pthresh, visited, dark,
+            self.DY, self.DX, self.cnt, self.TR, self.TC, self.PREV, self.NEXT,
+            self.FY, self.FX, self.fcnt, self.CY, self.CX, self.angles,
+        )
+        pts -= p
+        return [list(map(tuple, pts[a:b].tolist())) for a, b in zip(offs[:-1], offs[1:])]
+
+
+# --------------------------------------------------------------------------
+# Compiled core
+# --------------------------------------------------------------------------
+
+@njit(cache=True)
+def _valid_paths(img, r, c, visited, thresh, DY, DX, cnt, TR, TC, PREV, NEXT,
+                 means, out):
+    """Fills means[a] for every angle and out[:k] with valid angle indices
+    (ascending). Returns k."""
+    n = DY.shape[0]
+    for a in range(n):
+        s = 0.0
+        for k in range(cnt[a]):
+            s += img[r + DY[a, k], c + DX[a, k]]
+        means[a] = s / cnt[a]
+
+    th = thresh[r, c]
+    k = 0
+    for a in range(n):
+        v = means[a]
+        if not v < th or visited[r + TR[a], c + TC[a]]:
+            continue
+        valley = True
+        for j in range(PREV.shape[1]):
+            if v >= means[PREV[a, j]] or v > means[NEXT[a, j]]:
+                valley = False
+                break
+        if valley:
+            out[k] = a
+            k += 1
+    return k
+
+
+@njit(cache=True)
+def _stamp(visited, r, c, FY, FX, n):
+    H, W = visited.shape
+    for k in range(n):
+        y = r + FY[k]
+        x = c + FX[k]
+        if 0 <= y < H and 0 <= x < W:
+            visited[y, x] = 1
+
+
+@njit(cache=True)
+def _push(pts, n, r, c):
+    if n == pts.shape[0]:
+        bigger = np.empty((2 * n, 2), np.int64)
+        bigger[:n] = pts
+        pts = bigger
+    pts[n, 0] = r
+    pts[n, 1] = c
+    return pts
+
+
+@njit(cache=True)
+def _find_all(img, thresh, visited, dark, DY, DX, cnt, TR, TC, PREV, NEXT,
+              FY, FX, fcnt, CY, CX, angles):
+    n = DY.shape[0]
+    means = np.empty(n)
+    out = np.empty(n, np.int64)
+    pts = np.empty((1024, 2), np.int64)
+    offs = np.empty(dark.shape[0] + 1, np.int64)
+    offs[0] = 0
+    npts = 0
+    nlines = 0
+
+    for i in range(dark.shape[0]):
+        r = dark[i, 0]
+        c = dark[i, 1]
+        if visited[r, c]:
+            continue
+        if _valid_paths(img, r, c, visited, thresh, DY, DX, cnt, TR, TC,
+                        PREV, NEXT, means, out) != 1:
+            continue
+
+        _stamp(visited, r, c, CY, CX, CY.shape[0])
+        start = npts
+        pts = _push(pts, npts, r, c)
+        npts += 1
+
+        first = True
+        prev = 0
+        base = 0
+        while True:
+            k = _valid_paths(img, r, c, visited, thresh, DY, DX, cnt, TR, TC,
+                             PREV, NEXT, means, out)
+            if k == 0:
+                break
+            best = out[0]                      # first minimum, as min() does
+            for q in range(1, k):
+                if means[out[q]] < means[best]:
+                    best = out[q]
+            ang = angles[best]
+            if first:
+                base = ang
+                first = False
+            elif (abs((ang - prev + 180) % 360 - 180) > 45 or
+                  abs((ang - base + 180) % 360 - 180) > 60):
+                break
+            prev = ang
+
+            nr = r + TR[best]
+            nc = c + TC[best]
+            pts = _push(pts, npts, nr, nc)
+            npts += 1
+            _stamp(visited, r, c, FY[best], FX[best], fcnt[best])
+            r = nr
+            c = nc
+
+        if npts - start > 1:
+            nlines += 1
+            offs[nlines] = npts
+        else:
+            npts = start        # drop 1-point line; its start circle stays marked
+
+    return pts[:npts].copy(), offs[:nlines + 1].copy()
