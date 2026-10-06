@@ -4,7 +4,8 @@ from scipy.optimize import minimize
 from .energy import (
     surface_fit,
     total_energy,
-    quadratic_fit
+    quadratic_fit,
+    energy_precompute
 )
 import torch
 from scipy.ndimage import gaussian_filter
@@ -63,10 +64,11 @@ def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.00
     cloud_values = deformation_cloud[:, 2].detach().clone().requires_grad_(True)
 
     pinvX, (cu, cv) = quadratic_fit(cloud_coords)
+    curve_properties = energy_precompute(t, curves, f)
 
     for i in range(steps):
         #optimizer.zero_grad()
-        TE = total_energy(t, curves, cloud_values, pinvX, cu, cv, f)
+        TE = total_energy(t, curve_properties, cloud_values, pinvX, cu, cv, f)
         TE.backward()
         
         grad_norm = cloud_values.grad.norm().item()
@@ -90,10 +92,11 @@ def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, step
     optimizer = torch.optim.Adam([cloud_values], lr=learning_rate)
     
     pinvX, (cu, cv) = quadratic_fit(cloud_coords)
+    curve_properties = energy_precompute(t, curves, f)
 
     for i in range(steps):
         optimizer.zero_grad()
-        TE = total_energy(t, curves, cloud_values, pinvX, cu, cv, f)
+        TE = total_energy(t, curve_properties, cloud_values, pinvX, cu, cv, f)
         TE.backward()
         
         grad_norm = cloud_values.grad.norm().item()
@@ -112,6 +115,7 @@ def run_adam_descent(t, curves, f=1.0, num_points=256, learning_rate=0.001, step
 def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate, steps, eps, x_start, x_end, y_start, y_end, mult=100, deg=2, bin_size=0.5):
     span = torch.pi / 3
     flat_cloud = generate_flat_cloud(x_start, x_end, y_start, y_end, mult)
+    curve_properties = energy_precompute(T, active_curves, f)
     
     topologies = [
         ("Flat", flat_cloud)
@@ -133,7 +137,7 @@ def run_multi_start_optimization(T, active_curves, f, num_points, learning_rate,
         with torch.no_grad():
             coords, values = opt_cloud[:, :2], opt_cloud[:, 2]
             pinvX, (cu, cv) = quadratic_fit(coords)
-            energy = total_energy(T, active_curves, values, pinvX, cu, cv, f)
+            energy = total_energy(T, curve_properties, values, pinvX, cu, cv, f)
             
         results.append({
             'name': name,

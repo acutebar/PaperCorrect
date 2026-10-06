@@ -27,12 +27,10 @@ def surface_fit(x, y, coeffs):
     w_xy = torch.full_like(x, 1.0) * c4
     return w, w_x, w_y, w_xx, w_yy, w_xy
 
-def total_energy(T, curves, cloud_values, pinvX, cu, cv, f=1.0):
+def energy_precompute(T, curves, f=1.0):
     t = torch.as_tensor(T)
-
-    coeffs = pinvX @ cloud_values
-    total_E = coeffs.new_zeros(())
     bumps = max(curves, key=lambda c: c.num_bins).get_bumps(t) if curves else None
+    curve_properties = []
 
     for curve in curves:
         res = curve.curve_at(t, bumps)
@@ -48,6 +46,18 @@ def total_energy(T, curves, cloud_values, pinvX, cu, cv, f=1.0):
         ay = torch.as_tensor(ay, dtype=torch.float64).ravel()
         f_tensor = torch.full_like(x, f)
 
+        curve_properties.append((x, y, vx, vy, ax, ay, f_tensor))
+
+    return curve_properties
+
+def total_energy(T, curve_properties, cloud_values, pinvX, cu, cv, f=1.0):
+    t = torch.as_tensor(T)
+
+    coeffs = pinvX @ cloud_values
+    total_E = coeffs.new_zeros(())
+
+    for curve in curve_properties:
+        x, y, vx, vy, ax, ay, f_tensor = curve
         w, w_x, w_y, w_xx, w_yy, w_xy = surface_fit(x-cu, y-cv, coeffs)
         
         gamma_x = torch.stack([w_x * x + w, w_x * y, w_x * f_tensor], dim=1)

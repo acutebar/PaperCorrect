@@ -12,7 +12,7 @@ from PIL import Image, ExifTags
 
 import detector
 from detector.gradient_descent import run_gradient_descent, generate_flat_cloud, run_multi_start_optimization
-from detector.energy import surface_fit, total_energy, quadratic_fit
+from detector.energy import surface_fit, total_energy, quadratic_fit, energy_precompute
 
 # =============================================================================
 # GLOBAL HYPERPARAMETERS
@@ -146,6 +146,7 @@ class PaperCorrectApp:
 
         self.selected_lines = []
         self.curves_gd = []
+        self.curve_props_gd = []
         
         for line in raw_selected:
             # Shift center to absolute 0,0 optical center and shrink
@@ -156,12 +157,14 @@ class PaperCorrectApp:
             ]
             cur_curve = detector.Curve(centered_line_norm, deg=SPLINE_DEG, bin_size=CURVE_BIN_SIZE)
             
+            cur_props = energy_precompute(self.T_array, [cur_curve], f=1.0)
             with torch.no_grad():
-                e = total_energy(self.T_array, [cur_curve], self.baseline_values, self.baseline_pinvX, self.baseline_cu, self.baseline_cv, f=1.0).item()
+                e = total_energy(self.T_array, cur_props, self.baseline_values, self.baseline_pinvX, self.baseline_cu, self.baseline_cv, f=1.0).item()
                 
             if e < ENERGY_CUTOFF:
                 self.selected_lines.append(line)
                 self.curves_gd.append(cur_curve)
+                self.curve_props_gd.append(cur_props[0])
 
         print(f"Detected {len(self.selected_lines)} curves passing energy cutoff.")
         
@@ -196,12 +199,12 @@ class PaperCorrectApp:
         plt.show()
 
     def update_live_energy(self):
-        active_curves = [self.curves_gd[i] for i in range(len(self.curves_gd)) if self.line_active[i]]
-        if not active_curves:
+        active_props = [self.curve_props_gd[i] for i in range(len(self.curves_gd)) if self.line_active[i]]
+        if not active_props:
             energy_str = "0.0000"
         else:
             with torch.no_grad():
-                e = total_energy(self.T_array, active_curves, self.baseline_values, self.baseline_pinvX, self.baseline_cu, self.baseline_cv, f=1.0).item()
+                e = total_energy(self.T_array, active_props, self.baseline_values, self.baseline_pinvX, self.baseline_cu, self.baseline_cv, f=1.0).item()
             energy_str = f"{e:.4f}"
             
         self.ax_lines.set_title(f"STAGE 2: Click lines to deselect (Red=Inactive). Press Enter to optimize.\nInitial Baseline Energy of Active Lines: {energy_str}", fontweight='bold')
@@ -250,7 +253,7 @@ class PaperCorrectApp:
             opt_coords, opt_values = opt_cloud[:, :2], opt_cloud[:, 2]
             pinvX, (cu, cv) = quadratic_fit(opt_coords)
             coeffs = pinvX @ opt_values
-            final_energy = total_energy(T, active_curves_gd, opt_values, pinvX, cu, cv, f=1.0).item()
+            final_energy = total_energy(T, energy_precompute(T, active_curves_gd, f=1.0), opt_values, pinvX, cu, cv, f=1.0).item()
 
         # Build 3D Mesh tightly across the cropped region
         X_grid_norm = np.linspace(self.x_min_norm, self.x_max_norm, MESH_DENSITY)
