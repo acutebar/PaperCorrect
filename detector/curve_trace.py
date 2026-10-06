@@ -72,7 +72,7 @@ class LineDetector:
         f = img.astype(np.float32)
         mean = cv.filter2D(f, -1, self.kernel, borderType=cv.BORDER_REFLECT)
         mean_sq = cv.filter2D(f * f, -1, self.kernel, borderType=cv.BORDER_REFLECT)
-        thresh = mean - 15
+        thresh = mean - 0.5 * np.sqrt(np.maximum(0, mean_sq - mean * mean))
 
         # Padding is bright, below any threshold, and pre-marked visited
         p = self.pad
