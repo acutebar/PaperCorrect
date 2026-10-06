@@ -33,6 +33,7 @@ Below are some changes made since the version described in the writeup.
 - Optimization. Curve tracing is now compiled with Numba (just in time compilation) instead of running in pure Python, which makes the curve detection instant. 
 - Bump functions are precomputed once per run, rather than at every gradient descent step. 
 - The matrix required for local curve fitting is computed once for each curve rather than for every bin.
+- Time for 1000 steps of Vanilla descent reduced from 735.92s to 0.68s. 
 
 ## Running it
 
