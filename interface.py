@@ -113,7 +113,7 @@ class KinematicsGUI:
             # Compute and display total energy for all detected lines
             #total_e = 0.0
             #for line in self.lines:
-            #    (x_val, y_val), (vx_val, vy_val), (ax_val, ay_val) = detector.curve_fit(self.T, line, bin_size=0.13, deg=2)
+            #    (x_val, y_val), (vx_val, vy_val), (ax_val, ay_val) = detector.Curve(line, deg=2, bin_size=0.13).curve_at(self.T)
             #    x_c = x_val - self.true_center_x
             #    y_c = y_val - self.true_center_y
             #    u = x_c**2 + y_c**2 + self.f**2
@@ -156,7 +156,7 @@ class KinematicsGUI:
         self.line_artists[line_idx].set_alpha(0.8)
         
         raw_line = self.lines[line_idx]
-        (x, y), (vx, vy), (ax, ay) = detector.curve_fit(self.T, raw_line, bin_size=0.13, deg=2)
+        (x, y), (vx, vy), (ax, ay) = detector.Curve(raw_line, deg=2, bin_size=0.13).curve_at(self.T)
         
         self.active_x = x
         self.active_y = y

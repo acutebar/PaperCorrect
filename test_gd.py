@@ -182,7 +182,7 @@ class PaperCorrectApp:
         x_min, y_min, _, _, w, h = self.crop_params
         
         for i, curve in enumerate(self.curves_gd):
-            cx_norm, cy_norm = curve.point_at(self.T_array)
+            cx_norm, cy_norm = curve.curve_at(self.T_array)[0]
             # Re-scale back to pixel magnitude relative to crop for UI overlay
             plot_x = (cx_norm * self.f_pixels) + w/2.0 - x_min
             plot_y = (cy_norm * self.f_pixels) + h/2.0 - y_min
@@ -313,7 +313,7 @@ class PaperCorrectApp:
             pts = np.array(line_raw)
             ln1, = ax_2d.plot(pts[:, 1], pts[:, 0], 'r.', markersize=2)
             
-            fit_x_norm, fit_y_norm = curve_gd.point_at(T)
+            fit_x_norm, fit_y_norm = curve_gd.curve_at(T)[0]
             cx_norm, cy_norm = fit_x_norm, fit_y_norm
             
             plot_x = (cx_norm * self.f_pixels) + w/2.0 - x_min

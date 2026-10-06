@@ -59,7 +59,7 @@ plt.show()
 plt.close()
 
 T = np.linspace(0, 1, 1000)
-(x, y), (vx, vy), (ax, ay) = detector.curve_fit(T, line, bin_size=0.13, deg=2)
+(x, y), (vx, vy), (ax, ay) = detector.Curve(line, deg=2, bin_size=0.13).curve_at(T)
 
 plt.imshow(cleaned_img, cmap='gray')
 plt.plot(y, x, color='red', linewidth=2)
