@@ -54,7 +54,7 @@ def generate_flat_cloud(x_start, x_end, y_start, y_end, mult=100, depth=1.0):
     return torch.column_stack([u, v, w])
 
 def run_gradient_descent(t, curves, f=50.0, num_points=256, learning_rate=0.001, steps=500, eps=1e-4, initial_cloud=None):
-    return run_adam_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud)
+    return run_vanilla_descent(t, curves, f, num_points, learning_rate, steps, eps, initial_cloud)
 
 
 def run_vanilla_descent(t, curves, f = 50.0, num_points=256, learning_rate= 0.001, steps=500, eps=1e-5, initial_cloud=None):
