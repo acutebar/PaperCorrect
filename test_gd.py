@@ -164,7 +164,7 @@ class PaperCorrectApp:
             if e < ENERGY_CUTOFF:
                 self.selected_lines.append(line)
                 self.curves_gd.append(cur_curve)
-                self.curve_props_gd.append(cur_props[0])
+                self.curve_props_gd.append(cur_props)
 
         print(f"Detected {len(self.selected_lines)} curves passing energy cutoff.")
         
@@ -200,6 +200,8 @@ class PaperCorrectApp:
 
     def update_live_energy(self):
         active_props = [self.curve_props_gd[i] for i in range(len(self.curves_gd)) if self.line_active[i]]
+        # Each entry holds (1, K) tensors; join the active curves along the curve dimension
+        active_props = tuple(torch.cat(prop) for prop in zip(*active_props))
         if not active_props:
             energy_str = "0.0000"
         else:
