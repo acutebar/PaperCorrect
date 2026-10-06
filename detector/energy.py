@@ -22,10 +22,8 @@ def surface_fit(x, y, coeffs):
     w    = c0 + c1*x + c2*y + c3*x**2 + c4*x*y + c5*y**2
     w_x  = c1 + 2*c3*x + c4*y
     w_y  = c2 + c4*x + 2*c5*y
-    w_xx = torch.full_like(x, 1.0) * (2*c3)
-    w_yy = torch.full_like(x, 1.0) * (2*c5)
-    w_xy = torch.full_like(x, 1.0) * c4
-    return w, w_x, w_y, w_xx, w_yy, w_xy
+    # Second derivatives of a quadratic are constant, so they stay scalars
+    return w, w_x, w_y, 2*c3, 2*c5, c4
 
 def energy_precompute(T, curves, f=1.0):
     t = torch.as_tensor(T)
@@ -75,33 +73,29 @@ def total_energy(T, curve_properties, cloud_values, pinvX, cu, cv, f=1.0):
     coeffs = pinvX @ cloud_values
 
     x, y, vx, vy, ax, ay = curve_properties
-    f_tensor = torch.full_like(x, f)
     w, w_x, w_y, w_xx, w_yy, w_xy = surface_fit(x-cu, y-cv, coeffs)
-    
-    gamma_x = torch.stack([w_x * x + w, w_x * y, w_x * f_tensor], dim=-1)
-    gamma_y = torch.stack([w_y * x, w_y * y + w, w_y * f_tensor], dim=-1)
 
-    N_cross = torch.linalg.cross(gamma_x, gamma_y, dim=-1)
-    N_norm = torch.linalg.norm(N_cross, dim=-1, keepdim=True)
-    N_vec = N_cross / (N_norm + 1e-12)
+    # Surface normal gamma_x x gamma_y, with gamma_x = (w_x x + w, w_x y, w_x f)
+    # and gamma_y = (w_y x, w_y y + w, w_y f), expands to w * (-f w_x, -f w_y, w_x x + w_y y + w)
+    N1 = -f * w * w_x
+    N2 = -f * w * w_y
+    N3 = w * (w_x * x + w_y * y + w)
 
     w_t = w_x * vx + w_y * vy
     w_tt = (w_xx * vx**2 + 2 * w_xy * vx * vy + w_yy * vy**2) + w_x * ax + w_y * ay
-    w_ = w.unsqueeze(-1)
-    w_t_ = w_t.unsqueeze(-1)
-    w_tt_ = w_tt.unsqueeze(-1)
 
-    P = torch.stack([x, y, f_tensor], dim=-1)
-    P_t = torch.stack([vx, vy, torch.zeros_like(x)], dim=-1)
-    P_tt = torch.stack([ax, ay, torch.zeros_like(x)], dim=-1)
+    # gamma_t = w_t P + w P_t and gamma_tt = w_tt P + 2 w_t P_t + w P_tt, with P = (x, y, f)
+    g1 = w_t * x + w * vx
+    g2 = w_t * y + w * vy
+    g3 = w_t * f
+    h1 = w_tt * x + 2 * w_t * vx + w * ax
+    h2 = w_tt * y + 2 * w_t * vy + w * ay
+    h3 = w_tt * f
 
-    gamma_t = w_t_ * P + w_ * P_t
-    gamma_tt = w_tt_ * P + 2 * w_t_ * P_t + w_ * P_tt
+    # a_T = (gamma_t x gamma_tt) . N / |N|
+    a_T = ((g2*h3 - g3*h2) * N1 + (g3*h1 - g1*h3) * N2 + (g1*h2 - g2*h1) * N3) / (torch.sqrt(N1**2 + N2**2 + N3**2) + 1e-12)
 
-    v_cross_a = torch.linalg.cross(gamma_t, gamma_tt, dim=-1)
-    a_T = (v_cross_a * N_vec).sum(dim=-1)
-
-    speed_sq = (gamma_t**2).sum(dim=-1)
+    speed_sq = g1**2 + g2**2 + g3**2
     speed_sq_clamped = torch.clamp(speed_sq, min=1e-12)
 
     integrand = (a_T**2) / (speed_sq_clamped**2.5)
