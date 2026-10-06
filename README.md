@@ -26,6 +26,14 @@ The net geodesic energy is high when the guessed surface's geometry differs sign
 | **4. Energy evaluation** | The geodesic energy is assembled from the fitted curves and the geometry of the current surface.                                                                                                                                    | `evaluate_penalties` in `detector/energy.py`                                |
 | **5. Gradient descent**  | The guessed surface is initialized to the flat plane. The energy as a function of the discretized surface is differentiated end to end by PyTorch reverse-mode autodifferentiation, and the surface is updated until convergence or a fixed number of steps. | `run_vanilla_descent`, `run_adam_descent` in `detector/gradient_descent.py` |
 
+## Changes Since the Writeup
+
+Below are some changes made since the version described in the writeup. 
+- Surface fitting is done directly via a global quadratic. Local fits are removed and the matrix required to compute the fit is computed only once. 
+- Optimization. Curve tracing is now compiled with Numba (just in time compilation) instead of running in pure Python, which makes the curve detection instant. 
+- Bump functions are precomputed once per run, rather than at every gradient descent step. 
+- The matrix required for local curve fitting is computed once for each curve rather than for every bin.
+
 ## Running it
 
 To install all requirements, run 
