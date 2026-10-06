@@ -32,9 +32,10 @@ def total_energy(T, curves, cloud_values, pinvX, cu, cv, f=1.0):
 
     coeffs = pinvX @ cloud_values
     total_E = coeffs.new_zeros(())
+    bumps = max(curves, key=lambda c: c.num_bins).get_bumps(t) if curves else None
 
     for curve in curves:
-        res = curve.curve_at(t)
+        res = curve.curve_at(t, bumps)
         x, y = res[0][0], res[0][1]
         vx, vy = res[1][0], res[1][1]
         ax, ay = res[2][0], res[2][1]
